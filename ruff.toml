@@ -1,0 +1,21 @@
+target-version = "py311"
+line-length = 88
+
+[lint]
+select = ["F", "W", "E", "I", "UP", "ASYNC", "C4", "S", "T10", "T20", "PYI", "PT", "Q", "TID", "RUF"]
+ignore = ["E402", "UP037", "RUF001", "RUF002", "RUF003"]
+
+[lint.per-file-ignores]
+"tests/*" = ["S101", "S105", "S106", "ASYNC240"]
+
+[lint.isort]
+force-sort-within-sections = true
+known-first-party = ["qq_admin", "tests/*"]
+extra-standard-library = ["typing_extensions"]
+
+[lint.flake8-pytest-style]
+fixture-parentheses = false
+mark-parentheses = false
+
+[lint.pyupgrade]
+keep-runtime-typing = true

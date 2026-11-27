@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=84.1.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "opsmesh-plugin-qq-admin"
+version = "0.1.0"
+description = "Official QQ Bot v2 group administration plugin and standalone async function APIs for OpsMesh"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.11"
+dynamic = ["dependencies"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Typing :: Typed",
+]
+
+[project.optional-dependencies]
+dev = [
+    "bandit>=1.7.0",
+    "build>=1.2.0",
+    "pytest>=8.0.0",
+    "ruff>=0.9.0",
+    "twine>=5.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/jhupo/opsmesh-plugin-qq-admin"
+Repository = "https://github.com/jhupo/opsmesh-plugin-qq-admin"
+Issues = "https://github.com/jhupo/opsmesh-plugin-qq-admin/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["qq_admin*"]
+
+[tool.setuptools.package-data]
+qq_admin = ["py.typed"]
+
+[tool.setuptools.dynamic]
+dependencies = {file = ["requirements.txt"]}
