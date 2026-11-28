@@ -1,16 +1,13 @@
-"""Automatic moderation module: Jev assessment, dual agents, and QQ v2 actions."""
+"""Automatic moderation module: Jev SafetyReport, dual agents, and QQ v2 actions."""
 
-from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import timedelta
-import time
 from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, Field
 from qq import Gateway, SetMemberMuteState
-from typesafe_sdk import Choice, Image, Noul, Score
 
-from qq_admin.models import DecisionOutcome, ReplySpec, TurnContext
+from qq_admin.models import DecisionOutcome, ReplySpec, SafetyReport, TurnContext
 from qq_admin.store import ConfigStore, parse_field_value
 
 from .audit import AuditRecord
@@ -21,16 +18,6 @@ if TYPE_CHECKING:
 
 WarningCategory = Literal["spam", "abuse", "ad"]
 
-_AD_LABELS = {"advertising", "copyright_infringement", "non_violent_crime"}
-_ABUSE_LABELS = {
-    "violence",
-    "sexual_content",
-    "suicide_self_harm",
-    "political_sensitive",
-    "pii",
-    "unethical_behavior",
-}
-
 
 class ModerationConfig(BaseModel):
     """Automatic moderation switches and calibrated Jev thresholds."""
@@ -39,26 +26,14 @@ class ModerationConfig(BaseModel):
     stop_on_violation: bool = True
     allow_admin_nl_control: bool = True
     welcome_new_members: bool = False
-    recent_context_size: int = Field(default=20, ge=5, le=100)
     enable_image_review: bool = True
     enable_action_guardrail: bool = True
     max_images: int = Field(default=4, ge=1, le=8)
     injection_block_threshold: float = Field(default=0.80, ge=0.0, le=1.0)
-    banter_threshold: float = Field(default=0.70, ge=0.0, le=1.0)
     warn_confidence: float = Field(default=0.70, ge=0.0, le=1.0)
     enforce_confidence: float = Field(default=0.82, ge=0.0, le=1.0)
     action_validity_threshold: float = Field(default=0.75, ge=0.0, le=1.0)
     output_safety_threshold: float = Field(default=0.80, ge=0.0, le=1.0)
-
-
-@dataclass(slots=True)
-class MessageSnapshot:
-    """Compact message kept in the per-group sliding context buffer."""
-
-    message_id: str
-    member_id: str
-    content: str
-    timestamp: float = field(default_factory=time.time)
 
 
 @dataclass(slots=True)
@@ -71,65 +46,13 @@ class ActionOutcome:
     blocked_by: str = ""
 
 
-@dataclass(slots=True)
-class MessageAssessment:
-    """Calibrated Jev assessment of one inbound group message."""
-
-    injection_prob: float = 0.0
-    text_violation: str = "none"
-    text_confidence: float = 0.0
-    image_violation: str = "none"
-    image_confidence: float = 0.0
-    banter_prob: float = 0.0
-    severity: int = 0
-    severity_confidence: float = 0.0
-
-    @property
-    def violation(self) -> str:
-        if self.text_violation != "none":
-            return self.text_violation
-        return self.image_violation
-
-    @property
-    def confidence(self) -> float:
-        return max(
-            self.text_confidence, self.image_confidence, self.severity_confidence
-        )
-
-    @property
-    def category(self) -> WarningCategory:
-        if self.violation in _AD_LABELS:
-            return "ad"
-        if self.violation in _ABUSE_LABELS:
-            return "abuse"
-        return "spam"
-
-    def requires_action(self, cfg: ModerationConfig) -> bool:
-        if self.injection_prob >= cfg.injection_block_threshold:
-            return False
-        if self.violation == "none" or self.severity <= 0:
-            return False
-        if self.banter_prob >= cfg.banter_threshold and self.severity <= 1:
-            return False
-        return self.confidence >= cfg.warn_confidence
-
-    def summary(self) -> str:
-        return (
-            f"violation={self.violation}, severity={self.severity}, "
-            f"confidence={self.confidence:.2f}, banter={self.banter_prob:.2f}, "
-            f"injection={self.injection_prob:.2f}"
-        )
-
-
 class ModerationModule:
     """Moderates group messages and executes Official QQ v2 admin actions."""
 
     def __init__(self, store: ConfigStore, manager: "ServiceManager") -> None:
         self._store = store
         self._manager = manager
-        self._recent: dict[str, deque[MessageSnapshot]] = {}
 
-    # ---- configuration ----
     def config(self, group_id: str | None = None) -> ModerationConfig:
         raw = self._store.load_section("moderation", group_id=group_id)
         return ModerationConfig.model_validate(raw)
@@ -145,98 +68,26 @@ class ModerationModule:
         )
         return validated
 
-    # ---- context buffer ----
-    def remember(
-        self, group_id: str, message_id: str, member_id: str, content: str
-    ) -> None:
-        size = self.config(group_id).recent_context_size
-        buffer = self._recent.get(group_id)
-        if buffer is None or buffer.maxlen != size:
-            buffer = deque(buffer or (), maxlen=size)
-            self._recent[group_id] = buffer
-        buffer.append(MessageSnapshot(message_id, member_id, content))
-
-    def recent_messages(self, group_id: str, limit: int = 10) -> list[MessageSnapshot]:
-        buffer = self._recent.get(group_id)
-        return list(buffer)[-limit:] if buffer else []
-
-    def forget_group(self, group_id: str) -> None:
-        self._recent.pop(group_id, None)
-
-    # ---- Jev assessment ----
     async def assess(
         self,
         group_id: str,
-        member_id: str,
-        text: str,
         *,
+        text: str = "",
         images: list[bytes] | None = None,
-    ) -> MessageAssessment:
+        urls: list[str] | None = None,
+    ) -> SafetyReport:
+        """Run stateless Jev.execute() on text, images, text+images, or links."""
         cfg = self.config(group_id)
-        jev = self._manager.jev
-        if not jev.is_ready:
-            return MessageAssessment()
-
-        assets = (
-            {
-                f"img_{i}": Image(raw)
-                for i, raw in enumerate((images or [])[: cfg.max_images], start=1)
-            }
-            if cfg.enable_image_review
-            else {}
+        selected_images = (
+            (images or [])[: cfg.max_images] if cfg.enable_image_review else None
         )
-        if not text.strip() and not assets:
-            return MessageAssessment()
-
-        catalog = self._manager.catalog
-        questions: dict[str, Noul | Choice | Score] = {
-            "injection": Noul(instructions=catalog.jev_text("is_prompt_injection")),
-            "text_violation": Choice(
-                instructions=catalog.jev_text("violation_instructions"),
-                criteria=catalog.jev_text_criteria(),
-            ),
-            "banter": Noul(instructions=catalog.jev_text("is_friendly_banter")),
-            "severity": Score(
-                instructions=catalog.jev_text("severity_instructions"),
-                criteria=catalog.jev_severity_criteria(),
-            ),
-        }
-        if assets:
-            questions["image_violation"] = Choice(
-                instructions=catalog.jev_image("violation_instructions"),
-                criteria=catalog.jev_image_criteria(),
-            )
-
-        inputs = {
-            "group_id": group_id,
-            "member_id": member_id,
-            "text": text[:2000],
-            "recent_messages": [
-                {"member_id": m.member_id, "content": m.content[:200]}
-                for m in self.recent_messages(group_id)
-            ],
-            "attached_images": list(assets),
-        }
         try:
-            resp = await jev.execute(inputs, questions, images=assets)
+            return await self._manager.jev.execute(
+                text=text, images=selected_images, urls=urls
+            )
         except Exception:
-            return MessageAssessment()
+            return SafetyReport()
 
-        text_answer = resp.choices["text_violation"]
-        severity = resp.scores["severity"]
-        image_answer = resp.choices.get("image_violation") if assets else None
-        return MessageAssessment(
-            injection_prob=float(resp.nouls["injection"].noul),
-            text_violation=str(text_answer.choice),
-            text_confidence=float(text_answer.confidence),
-            image_violation=str(image_answer.choice) if image_answer else "none",
-            image_confidence=float(image_answer.confidence) if image_answer else 0.0,
-            banter_prob=float(resp.nouls["banter"].noul),
-            severity=round(float(severity.score)),
-            severity_confidence=float(severity.confidence),
-        )
-
-    # ---- message pipelines ----
     async def moderate_message(
         self,
         gateway: Gateway,
@@ -247,13 +98,17 @@ class ModerationModule:
         text: str,
         sender_role: str,
         images: list[bytes] | None = None,
+        urls: list[str] | None = None,
     ) -> tuple[bool, str | None]:
-        """Jev assessment -> DecisionAgent -> ReplyAgent; silent on normal chat."""
+        """Jev SafetyReport -> DecisionAgent -> ReplyAgent; silent on safe chat."""
         cfg = self.config(group_id)
         if not cfg.enabled:
             return False, None
-        assessment = await self.assess(group_id, member_id, text, images=images)
-        if not assessment.requires_action(cfg):
+
+        report = await self.assess(group_id, text=text, images=images, urls=urls)
+        if report.prompt_injection >= cfg.injection_block_threshold:
+            return False, None
+        if not report.is_flagged(cfg.warn_confidence):
             return False, None
 
         bot_role = await self._manager.identity.bot_role(gateway, group_id)
@@ -264,9 +119,10 @@ class ModerationModule:
                 member_id=member_id,
                 message_id=message_id,
                 bot_role=bot_role,
-                assessment=assessment,
+                report=report,
             )
 
+        summary = report.summary(cfg.warn_confidence)
         turn = TurnContext(
             gateway=gateway,
             manager=self._manager,
@@ -277,11 +133,12 @@ class ModerationModule:
             bot_role=bot_role,
             sender_role=sender_role,
             mode="auto_moderate",
-            jev_summary=assessment.summary(),
+            jev_summary=summary,
         )
         prompt = (
             f"message_id={message_id}\nmember_id={member_id} (role={sender_role})\n"
-            f"content={text}\nimages={len(images or [])}\njev={assessment.summary()}"
+            f"content={text}\nimages={len(images or [])}\nurls={urls or []}\n"
+            f"jev={summary}"
         )
         decision = await self._manager.decision_agent.execute(prompt, context=turn)
         return decision.action_taken, await self._reply_for(turn, decision)
@@ -347,23 +204,23 @@ class ModerationModule:
         member_id: str,
         message_id: str,
         bot_role: str,
-        assessment: MessageAssessment,
+        report: SafetyReport,
     ) -> tuple[bool, str | None]:
         cfg = self.config(group_id)
-        reason = f"{assessment.violation} (severity={assessment.severity})"
-        if assessment.severity <= 1 or assessment.confidence < cfg.enforce_confidence:
+        reason = f"{report.primary_category} (severity={report.severity})"
+        if report.severity <= 1 or report.max_risk < cfg.enforce_confidence:
             outcome = await self.warn(
                 gateway,
                 group_id,
                 member_id,
-                category=assessment.category,
+                category=report.warning_category,
                 reason=reason,
             )
         else:
             await self.recall(
                 gateway, group_id, message_id, target_id=member_id, reason=reason
             )
-            if assessment.severity == 2:
+            if report.severity == 2:
                 outcome = await self.mute(
                     gateway, group_id, member_id, duration=600, reason=reason
                 )
@@ -373,7 +230,7 @@ class ModerationModule:
                     group_id,
                     member_id,
                     reason=reason,
-                    blacklist=assessment.severity >= 4,
+                    blacklist=report.severity >= 4,
                 )
         if not outcome.succeeded:
             return False, None
@@ -387,7 +244,7 @@ class ModerationModule:
                 actor_role=bot_role,
                 target_id=member_id,
                 executed_actions=[outcome.action],
-                facts={"violation": assessment.violation, "detail": outcome.message},
+                facts={"violation": report.primary_category, "detail": outcome.message},
                 fallback=outcome.message,
             )
         )
@@ -606,7 +463,6 @@ class ModerationModule:
         self._manager.warning.clear_member(group_id, member_id)
         return await self.unmute(gateway, group_id, member_id, operator_id=operator_id)
 
-    # ---- helpers ----
     async def _update_blacklist(
         self,
         gateway: Gateway,
@@ -701,8 +557,6 @@ class ModerationModule:
 
 __all__ = [
     "ActionOutcome",
-    "MessageAssessment",
-    "MessageSnapshot",
     "ModerationConfig",
     "ModerationModule",
     "WarningCategory",

@@ -160,11 +160,8 @@ async def test_group_message_admin_skip_and_lifecycle_events() -> None:
     fake_jev.system_one = AsyncMock(
         return_value=SimpleNamespace(
             nouls={
-                "injection": SimpleNamespace(noul=0.01),
-                "banter": SimpleNamespace(noul=0.02),
-            },
-            choices={
-                "text_violation": SimpleNamespace(choice="advertising", confidence=0.95)
+                "advertising": SimpleNamespace(noul=0.95),
+                "prompt_injection": SimpleNamespace(noul=0.01),
             },
             scores={"severity": SimpleNamespace(score=2.0, confidence=0.92)},
         )

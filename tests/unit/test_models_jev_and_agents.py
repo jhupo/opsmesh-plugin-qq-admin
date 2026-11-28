@@ -40,14 +40,15 @@ def _mock_jev_resp(
 
 
 @pytest.mark.anyio
-async def test_jev_execute_and_moderation_assessment() -> None:
+async def test_jev_execute_text_image_and_url_inputs() -> None:
     fake_client = MagicMock()
     fake_client.system_one = AsyncMock(
         return_value=_mock_jev_resp(
-            nouls={"injection": 0.05, "banter": 0.10},
-            choices={
-                "text_violation": ("advertising", 0.94),
-                "image_violation": ("advertising", 0.91),
+            nouls={
+                "violence": 0.02,
+                "sexual_content": 0.01,
+                "advertising": 0.94,
+                "prompt_injection": 0.05,
             },
             scores={"severity": (3.0, 0.92)},
         )
@@ -55,23 +56,36 @@ async def test_jev_execute_and_moderation_assessment() -> None:
     fake_client.aclose = AsyncMock()
 
     manager = ServiceManager(Config(jev_model="jev-1"), jev_client=fake_client)
-    assessment = await manager.moderation.assess(
-        "G1", "U1", "buy cheap promo", images=[b"fake-png-bytes"]
-    )
-    assert assessment.violation == "advertising"
-    assert assessment.image_violation == "advertising"
-    assert assessment.severity == 3
-    assert assessment.requires_action(manager.moderation.config("G1"))
 
+    # Text + image + url
+    report = await manager.jev.execute(
+        text="buy cheap promo",
+        images=[b"fake-png-bytes"],
+        urls=["https://example.com/promo"],
+    )
+    assert report.advertising == 0.94
+    assert report.severity == 3
+    assert report.primary_category == "advertising"
+    assert report.is_flagged(0.70)
+    assert "advertising" in report.triggered(0.70)
+
+    # Image-only call works without text
+    img_only = await manager.jev.execute(images=[b"fake-png-bytes"])
+    assert img_only.is_flagged(0.70)
+
+    # Link-only call works without text/images
+    url_only = await manager.jev.execute(urls=["https://example.com/ad"])
+    assert url_only.is_flagged(0.70)
+
+    # Safe input -> not flagged
     fake_client.system_one = AsyncMock(
         return_value=_mock_jev_resp(
-            nouls={"injection": 0.01, "banter": 0.91},
-            choices={"text_violation": ("flame_bait", 0.75)},
-            scores={"severity": (1.0, 0.75)},
+            nouls={"violence": 0.01, "advertising": 0.02},
+            scores={"severity": (0.0, 0.99)},
         )
     )
-    banter = await manager.moderation.assess("G1", "U2", "haha noob")
-    assert not banter.requires_action(manager.moderation.config("G1"))
+    safe = await manager.jev.execute(text="hello everyone")
+    assert not safe.is_flagged(0.70)
 
 
 @pytest.mark.anyio

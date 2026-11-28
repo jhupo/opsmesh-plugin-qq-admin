@@ -18,8 +18,7 @@ class PromptCatalog:
     """Typed accessor over prompt files in qq_admin/prompts/."""
 
     def __init__(self) -> None:
-        self._jev_text = _load_file("jev_text.toml")
-        self._jev_image = _load_file("jev_image.toml")
+        self._jev = _load_file("jev.toml")
         self._jev_guards = _load_file("jev_guards.toml")
         self._decision = _load_file("decision_agent.toml")
         self._reply = _load_file("reply_agent.toml")
@@ -29,21 +28,15 @@ class PromptCatalog:
     def load(cls) -> "PromptCatalog":
         return cls()
 
-    # ---- Jev text & image ----
-    def jev_text(self, key: str) -> str:
-        return str(self._jev_text.get(key, ""))
+    # ---- Jev fixed safety questions ----
+    def jev_questions(self) -> dict[str, str]:
+        return dict(self._jev.get("questions", {}))
 
-    def jev_text_criteria(self) -> dict[str, str]:
-        return dict(self._jev_text.get("violation_criteria", {}))
+    def jev_severity_instructions(self) -> str:
+        return str(self._jev.get("severity_instructions", ""))
 
     def jev_severity_criteria(self) -> list[str]:
-        return list(self._jev_text.get("severity_criteria", []))
-
-    def jev_image(self, key: str) -> str:
-        return str(self._jev_image.get(key, ""))
-
-    def jev_image_criteria(self) -> dict[str, str]:
-        return dict(self._jev_image.get("violation_criteria", {}))
+        return list(self._jev.get("severity_criteria", []))
 
     # ---- Jev join & guards ----
     def jev_join(self, key: str) -> str:

@@ -64,7 +64,6 @@ async def process_group_event(
         return None
     if isinstance(event, GroupDelRobotEvent):
         manager.identity.forget_group(group_id)
-        manager.moderation.forget_group(group_id)
         manager.audit.forget_group(group_id)
         return None
     if not manager.is_group_enabled(group_id):

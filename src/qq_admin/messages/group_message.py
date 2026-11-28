@@ -1,5 +1,7 @@
 """Direct OpsMesh group message entry: admins -> @Bot control, users -> moderation."""
 
+import re
+
 from opsmesh import on_message
 from opsmesh.log import logger
 from opsmesh.matcher import Matcher
@@ -8,6 +10,7 @@ from qq import Gateway, GroupMessageEvent
 from qq_admin.manager import ServiceManager, manager
 
 group_msg = on_message(priority=5, block=False)
+_URL_RE = re.compile(r"https?://\S+", re.IGNORECASE)
 
 
 async def download_images(
@@ -42,7 +45,6 @@ async def process_group_message(
     if text.startswith("/"):
         return False, None
 
-    manager.moderation.remember(group_id, event.id, member_id, text)
     if await manager.identity.is_admin(gateway, group_id, member_id):
         if event.is_tome() and text:
             sender_role = await manager.identity.member_role(
@@ -58,6 +60,7 @@ async def process_group_message(
             )
         return False, None
 
+    urls = _URL_RE.findall(text)
     return await manager.moderation.moderate_message(
         gateway,
         group_id=group_id,
@@ -66,6 +69,7 @@ async def process_group_message(
         text=text,
         sender_role="member",
         images=await download_images(gateway, event, manager),
+        urls=urls or None,
     )
 
 

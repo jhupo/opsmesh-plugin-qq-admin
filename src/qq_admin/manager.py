@@ -69,7 +69,7 @@ class ServiceManager:
         self._owns_openai = openai_client is None
         self._openai_client = openai_client or _build_openai_client(config)
 
-        self.jev = Jev(config, client=jev_client)
+        self.jev = Jev(config, self.catalog, client=jev_client)
         self.decision_agent = DecisionAgent(config, client=self._openai_client)
         self.reply_agent = ReplyAgent(config, client=self._openai_client)
 

@@ -2,7 +2,7 @@
 
 from .decision_agent import DecisionAgent, DecisionOutcome, TurnContext
 from .guardrails import action_guardrail, injection_guardrail, reply_guardrail
-from .jev import AsyncTypeSafeClient, Jev
+from .jev import SAFETY_FIELDS, AsyncTypeSafeClient, Jev, SafetyReport
 from .reply_agent import ReplyAgent, ReplySpec
 from .tools import (
     GROUP_ADMIN_TOOLS,
@@ -19,12 +19,14 @@ from .tools import (
 
 __all__ = [
     "GROUP_ADMIN_TOOLS",
+    "SAFETY_FIELDS",
     "AsyncTypeSafeClient",
     "DecisionAgent",
     "DecisionOutcome",
     "Jev",
     "ReplyAgent",
     "ReplySpec",
+    "SafetyReport",
     "TurnContext",
     "action_guardrail",
     "ban_member",

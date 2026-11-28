@@ -5,9 +5,9 @@ Automatic Official QQ Bot v2 group administration plugin for [OpsMesh](https://g
 ## Architecture
 
 - **Minimal Flat Config ([config.py](src/qq_admin/config.py))**: One flat `Config` (`jev_api_key`, `jev_model`, `openai_api_key`, `openai_base_url`, `model`, `reasoning_effort`, `max_turns`, `timeout_seconds`, `config_path`). Every feature module owns its own defaults and persists per-group overrides via `ConfigStore` only when customized online via `/admin`.
-- **Dedicated Prompts Folder (`src/qq_admin/prompts/`)**: Separated prompt files for Jev text/image safety classification (`jev_text.toml`, `jev_image.toml`, covering violence, sexual content, suicide/self-harm, political sensitivity, jailbreak/prompt injection, non-violent crime, PII, unethical behavior, copyright infringement, and advertising), guardrails (`jev_guards.toml`), `decision_agent.toml`, `reply_agent.toml`, and `notices.toml`.
+- **Dedicated Prompts Folder (`src/qq_admin/prompts/`)**: Separated prompt files for stateless Jev safety classification (`jev.toml` covering violence, sexual content, suicide/self-harm, political sensitivity, jailbreak, non-violent crime, PII, unethical behavior, copyright infringement, advertising, and prompt injection), guardrails (`jev_guards.toml`), `decision_agent.toml`, `reply_agent.toml`, and `notices.toml`.
 - **Stateless Model Runners (`src/qq_admin/models/`)**:
-  - `Jev.execute(inputs, outputs, images=...)`: thin wrapper over official `typesafe-sdk` `AsyncTypeSafeClient`.
+  - `Jev.execute(text=..., images=..., urls=...) -> SafetyReport`: stateless TypeSafe Jev classifier with fixed questions returning typed risk scores.
   - `DecisionAgent.execute(prompt, context=...)`: stateless tool-calling moderation decision agent (`temperature=0.0`).
   - `ReplyAgent.execute(spec)`: stateless persona-driven reply composer (`temperature=0.7`) with hallucination/safety guardrails.
 - **Self-Contained Feature Modules (`src/qq_admin/modules/`)**:

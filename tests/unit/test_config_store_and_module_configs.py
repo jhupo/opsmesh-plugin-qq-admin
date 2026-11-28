@@ -7,6 +7,7 @@ import pytest
 import qq_admin
 from qq_admin import (
     PROMPTS_DIR,
+    SAFETY_FIELDS,
     Config,
     ConfigError,
     ConfigStore,
@@ -14,19 +15,7 @@ from qq_admin import (
     ServiceManager,
 )
 
-EXPECTED_SAFETY_CATEGORIES = {
-    "none",
-    "violence",
-    "sexual_content",
-    "suicide_self_harm",
-    "political_sensitive",
-    "jailbreak",
-    "non_violent_crime",
-    "pii",
-    "unethical_behavior",
-    "copyright_infringement",
-    "advertising",
-}
+EXPECTED_SAFETY_CATEGORIES = set(SAFETY_FIELDS)
 
 
 def test_config_defaults_and_prompts_folder() -> None:
@@ -44,10 +33,7 @@ def test_config_defaults_and_prompts_folder() -> None:
 
     assert PROMPTS_DIR.is_dir()
     catalog = PromptCatalog.load()
-    assert set(catalog.jev_text_criteria().keys()) == EXPECTED_SAFETY_CATEGORIES
-    assert (EXPECTED_SAFETY_CATEGORIES - {"jailbreak"}).issubset(
-        set(catalog.jev_image_criteria().keys())
-    )
+    assert set(catalog.jev_questions().keys()) == EXPECTED_SAFETY_CATEGORIES
     assert catalog.jev_severity_criteria()
     assert catalog.composer_persona()
 

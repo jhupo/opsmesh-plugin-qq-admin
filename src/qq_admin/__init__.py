@@ -55,12 +55,14 @@ from .exception import SafeguardBlockedError as SafeguardBlockedError
 from .manager import ServiceManager as ServiceManager
 from .manager import manager as manager
 from .models import GROUP_ADMIN_TOOLS as GROUP_ADMIN_TOOLS
+from .models import SAFETY_FIELDS as SAFETY_FIELDS
 from .models import AsyncTypeSafeClient as AsyncTypeSafeClient
 from .models import DecisionAgent as DecisionAgent
 from .models import DecisionOutcome as DecisionOutcome
 from .models import Jev as Jev
 from .models import ReplyAgent as ReplyAgent
 from .models import ReplySpec as ReplySpec
+from .models import SafetyReport as SafetyReport
 from .models import TurnContext as TurnContext
 from .models import ban_member as ban_member
 from .models import get_member as get_member
@@ -82,8 +84,6 @@ from .modules import EscalationModule as EscalationModule
 from .modules import EscalationRule as EscalationRule
 from .modules import IdentityConfig as IdentityConfig
 from .modules import IdentityModule as IdentityModule
-from .modules import MessageAssessment as MessageAssessment
-from .modules import MessageSnapshot as MessageSnapshot
 from .modules import ModerationConfig as ModerationConfig
 from .modules import ModerationModule as ModerationModule
 from .modules import MuteDuration as MuteDuration

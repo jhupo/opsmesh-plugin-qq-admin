@@ -7,8 +7,6 @@ from .escalation import EscalationConfig, EscalationModule, EscalationRule
 from .identity import IdentityConfig, IdentityModule, PermissionTrace
 from .moderation import (
     ActionOutcome,
-    MessageAssessment,
-    MessageSnapshot,
     ModerationConfig,
     ModerationModule,
     WarningCategory,
@@ -28,8 +26,6 @@ __all__ = [
     "EscalationRule",
     "IdentityConfig",
     "IdentityModule",
-    "MessageAssessment",
-    "MessageSnapshot",
     "ModerationConfig",
     "ModerationModule",
     "MuteDuration",
