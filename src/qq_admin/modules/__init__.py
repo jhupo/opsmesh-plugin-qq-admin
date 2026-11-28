@@ -4,7 +4,7 @@ from .approval import ApprovalConfig, ApprovalModule, GatewayProvider
 from .audit import AuditConfig, AuditModule, AuditRecord
 from .duration import MuteDuration, format_duration, parse_duration
 from .escalation import EscalationConfig, EscalationModule, EscalationRule
-from .identity import IdentityConfig, IdentityModule, MinimumRole, PermissionTrace
+from .identity import IdentityConfig, IdentityModule, PermissionTrace
 from .moderation import (
     ActionOutcome,
     MessageAssessment,
@@ -31,7 +31,6 @@ __all__ = [
     "IdentityModule",
     "MessageAssessment",
     "MessageSnapshot",
-    "MinimumRole",
     "ModerationConfig",
     "ModerationModule",
     "MuteDuration",

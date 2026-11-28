@@ -64,13 +64,13 @@ async def test_safeguard_8_steps_and_owner_bypass() -> None:
     )
     assert not v2.allowed
     assert v2.blocked_by == "exempt_users"
-    # 3. global admins
+    # 3. global admins & group admins (unified auto_exempt_admins via is_admin)
     v3 = await manager.safeguard.check_action(
         gw, "G1", "GLOBAL_ADMIN", "mute", mute_seconds=600
     )
     assert not v3.allowed
-    assert v3.blocked_by == "admins"
-    # 4. auto_exempt_admins
+    assert v3.blocked_by == "auto_exempt_admins"
+    # 4. group admin
     v4 = await manager.safeguard.check_action(
         gw, "G1", "MOD_1", "mute", mute_seconds=600
     )

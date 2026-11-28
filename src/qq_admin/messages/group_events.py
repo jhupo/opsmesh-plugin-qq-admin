@@ -1,4 +1,4 @@
-"""Group lifecycle entries: join requests, member join/leave, bot join/leave."""
+"""Direct OpsMesh group lifecycle entries: join requests, member & bot join/leave."""
 
 from opsmesh import on_notice
 from qq import (
@@ -13,9 +13,11 @@ from qq import (
     VerifyInfo,
 )
 
-from qq_admin.manager import ServiceManager
+from qq_admin.manager import ServiceManager, get_manager
 from qq_admin.models import ReplySpec
 from qq_admin.modules import AuditRecord
+
+group_notice = on_notice(priority=5, block=False)
 
 
 def _join_request_from(event: GroupJoinRequestEvent) -> JoinRequest:
@@ -50,92 +52,59 @@ def _audit_lifecycle(
     )
 
 
-async def on_join_request(
-    gateway: Gateway, event: GroupJoinRequestEvent, manager: ServiceManager
-) -> None:
-    if event.auto_approved:
-        return
-    await manager.approval.review(
-        gateway, event.group_openid, _join_request_from(event)
-    )
-
-
-async def on_member_join(
-    gateway: Gateway, event: GroupMemberAddEvent, manager: ServiceManager
-) -> str | None:
-    group_id, member_id = event.group_openid, event.member_openid
-    manager.identity.forget_member(group_id, member_id)
-    _audit_lifecycle(manager, group_id, "member_join", member_id)
-    if not manager.moderation.config(group_id).welcome_new_members:
-        return None
-    return await manager.reply_agent.execute(
-        ReplySpec(
-            manager=manager,
-            group_id=group_id,
-            bot_role=await manager.identity.bot_role(gateway, group_id),
-            scenario="member_welcome",
-            target_id=member_id,
-            fallback=manager.catalog.format_fallback(
-                "member_welcome", member_id=member_id
-            ),
-        )
-    )
-
-
-async def on_member_leave(
-    event: GroupMemberRemoveEvent, manager: ServiceManager
-) -> None:
-    group_id, member_id = event.group_openid, event.member_openid
-    manager.identity.forget_member(group_id, member_id)
-    manager.warning.clear_member(group_id, member_id)
-    manager.safeguard.clear_member(group_id, member_id)
-    _audit_lifecycle(manager, group_id, "member_leave", member_id)
-
-
-async def on_bot_join(
-    gateway: Gateway, event: GroupAddRobotEvent, manager: ServiceManager
-) -> None:
-    await manager.identity.bot_role(gateway, event.group_openid, force=True)
-
-
-async def on_bot_leave(event: GroupDelRobotEvent, manager: ServiceManager) -> None:
-    group_id = event.group_openid
-    manager.identity.forget_group(group_id)
-    manager.moderation.forget_group(group_id)
-    manager.audit.forget_group(group_id)
-    await manager.reset_group_sessions(group_id)
-
-
-async def handle_group_event(
+async def process_group_event(
     gateway: Gateway, event: GroupNoticeEvent, manager: ServiceManager
 ) -> str | None:
-    """Route one group notice; bot join/leave always run, others need the group on."""
+    """Route one group notice; bot join/leave always run, others require group on."""
     group_id = event.group_openid
     if not group_id:
         return None
     if isinstance(event, GroupAddRobotEvent):
-        await on_bot_join(gateway, event, manager)
+        await manager.identity.bot_role(gateway, group_id, force=True)
         return None
     if isinstance(event, GroupDelRobotEvent):
-        await on_bot_leave(event, manager)
+        manager.identity.forget_group(group_id)
+        manager.moderation.forget_group(group_id)
+        manager.audit.forget_group(group_id)
         return None
     if not manager.is_group_enabled(group_id):
         return None
-    if isinstance(event, GroupJoinRequestEvent):
-        await on_join_request(gateway, event, manager)
-    elif isinstance(event, GroupMemberAddEvent):
-        return await on_member_join(gateway, event, manager)
-    elif isinstance(event, GroupMemberRemoveEvent):
-        await on_member_leave(event, manager)
+
+    if isinstance(event, GroupJoinRequestEvent) and not event.auto_approved:
+        await manager.approval.review(gateway, group_id, _join_request_from(event))
+        return None
+    if isinstance(event, GroupMemberAddEvent):
+        member_id = event.member_openid
+        manager.identity.forget_member(group_id, member_id)
+        _audit_lifecycle(manager, group_id, "member_join", member_id)
+        if not manager.moderation.config(group_id).welcome_new_members:
+            return None
+        return await manager.reply_agent.execute(
+            ReplySpec(
+                manager=manager,
+                group_id=group_id,
+                bot_role=await manager.identity.bot_role(gateway, group_id),
+                scenario="member_welcome",
+                target_id=member_id,
+                fallback=manager.catalog.format_fallback(
+                    "member_welcome", member_id=member_id
+                ),
+            )
+        )
+    if isinstance(event, GroupMemberRemoveEvent):
+        member_id = event.member_openid
+        manager.identity.forget_member(group_id, member_id)
+        manager.warning.clear_member(group_id, member_id)
+        manager.safeguard.clear_member(group_id, member_id)
+        _audit_lifecycle(manager, group_id, "member_leave", member_id)
     return None
 
 
-def bind_group_events(manager: ServiceManager) -> None:
-    @on_notice(priority=5, block=False).handle()
-    async def _group_event(gateway: Gateway, event: GroupNoticeEvent) -> None:
-        reply = await handle_group_event(gateway, event, manager)
-        if reply:
-            await gateway.send(event, reply)
+@group_notice.handle()
+async def handle_group_event(gateway: Gateway, event: GroupNoticeEvent) -> None:
+    reply = await process_group_event(gateway, event, get_manager())
+    if reply:
+        await gateway.send(event, reply)
 
 
-__all__ = ["bind_group_events", "handle_group_event"]
+__all__ = ["group_notice", "handle_group_event", "process_group_event"]

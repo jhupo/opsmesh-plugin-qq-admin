@@ -4,11 +4,11 @@ Automatic Official QQ Bot v2 group administration plugin for [OpsMesh](https://g
 
 ## Architecture
 
-- **Minimal Base Config ([config.toml](src/qq_admin/resources/config.toml))**: Only `[jev]` and `[agent]` connection/session settings. Every feature module owns its own defaults and writes per-group overrides only when customized online via `/admin`.
-- **Unified Model Runners (`src/qq_admin/models/`)**:
+- **Minimal Base Config ([config.toml](src/qq_admin/resources/config.toml))**: Only `[jev]`, `[decision_agent]`, and `[reply_agent]` (`DecisionAgentConfig` and `ReplyAgentConfig` inherit `BaseAgentConfig` with `api_key`, `base_url`, `model`, `reasoning_effort`, `temperature`, `max_turns`, `timeout_seconds`). Every feature module owns its own defaults and writes per-group overrides only when customized online via `/admin`.
+- **Stateless Model Runners (`src/qq_admin/models/`)**:
   - `Jev.execute(inputs, outputs, images=...)`: thin wrapper over official `typesafe-sdk` `AsyncTypeSafeClient`.
-  - `DecisionAgent.execute(prompt, context=..., session_mode=...)`: tool-calling moderation decision agent (`temperature=0.0`) with configurable `fresh` / `shared` (`SQLiteSession`) modes.
-  - `ReplyAgent.execute(spec, session_mode=...)`: persona-driven reply composer (`temperature=0.7`) with configurable `fresh` / `shared` session modes and hallucination/safety guardrails.
+  - `DecisionAgent.execute(prompt, context=...)`: stateless tool-calling moderation decision agent (`temperature=0.0`).
+  - `ReplyAgent.execute(spec)`: stateless persona-driven reply composer (`temperature=0.7`) with hallucination/safety guardrails.
 - **Self-Contained Feature Modules (`src/qq_admin/modules/`)**:
   - `identity` (`IdentityConfig` + `IdentityModule`): Bot/member role cache, authorization, `/admin perm` trace.
   - `safeguard` (`SafeguardConfig` + `SafeguardModule`): Role-aware 8-step safety guardrails (bypassed when Bot is group owner).
@@ -39,7 +39,6 @@ Enable group moderation online in any group (by group owner or configured global
 ```text
 /admin on
 /admin config set safeguard.max_mute_duration 1800
-/admin session mode shared
 /admin status
 ```
 

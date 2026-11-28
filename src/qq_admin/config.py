@@ -1,4 +1,4 @@
-"""Base model configs (Jev & Agent) and module-agnostic TOML ConfigStore."""
+"""Base model configs (Jev, DecisionAgent, ReplyAgent) and TOML ConfigStore."""
 
 from copy import deepcopy
 import json
@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
 from .exception import ConfigError
 
-SessionMode = Literal["fresh", "shared"]
+ReasoningEffort = Literal["none", "minimal", "low", "medium", "high"]
 
 
 class JevConfig(BaseModel):
@@ -31,45 +31,46 @@ class JevConfig(BaseModel):
         return self.api_key.get_secret_value().strip()
 
 
-class AgentConfig(BaseModel):
-    """Connection and session settings for DecisionAgent and ReplyAgent."""
+class BaseAgentConfig(BaseModel):
+    """Shared LLM connection and execution settings for OpenAI Agents."""
 
     api_key: SecretStr = Field(
         default=SecretStr(""),
         description="OpenAI or compatible endpoint API key.",
     )
     base_url: str = Field(default="", description="Optional custom OpenAI base URL.")
-    decision_model: str = Field(
-        default="gpt-5-mini", description="Model used by DecisionAgent."
+    model: str = Field(default="gpt-5-mini", description="Target LLM model name.")
+    reasoning_effort: ReasoningEffort | None = Field(
+        default=None,
+        description="Optional reasoning effort level (none/minimal/low/medium/high).",
     )
-    reply_model: str = Field(
-        default="", description="Model used by ReplyAgent; defaults to decision_model."
-    )
-    reply_temperature: float = Field(
-        default=0.7, ge=0.0, le=2.0, description="Sampling temperature for ReplyAgent."
-    )
-    reply_persona: str = Field(
-        default="", description="Optional persona overriding prompts.toml."
+    temperature: float | None = Field(
+        default=None, ge=0.0, le=2.0, description="Optional sampling temperature."
     )
     use_chat_completions: bool = Field(default=False)
     timeout_seconds: float = Field(default=30.0, gt=0)
     max_turns: int = Field(default=6, ge=1, le=16)
-    session_mode: SessionMode = Field(
-        default="fresh",
-        description="Session strategy: 'fresh' per call or 'shared' per session key.",
-    )
-    session_db_path: str = Field(
-        default=":memory:",
-        description="SQLite path used when session_mode is 'shared'.",
-    )
 
     @property
     def secret_value(self) -> str:
         return self.api_key.get_secret_value().strip()
 
-    @property
-    def effective_reply_model(self) -> str:
-        return self.reply_model.strip() or self.decision_model
+
+class DecisionAgentConfig(BaseAgentConfig):
+    """Configuration for DecisionAgent (tool-calling moderation decisions)."""
+
+    temperature: float | None = Field(default=0.0, ge=0.0, le=2.0)
+    max_turns: int = Field(default=6, ge=1, le=16)
+
+
+class ReplyAgentConfig(BaseAgentConfig):
+    """Configuration for ReplyAgent (persona-driven dynamic replies)."""
+
+    temperature: float | None = Field(default=0.7, ge=0.0, le=2.0)
+    max_turns: int = Field(default=2, ge=1, le=8)
+    persona: str = Field(
+        default="", description="Optional persona overriding prompts.toml."
+    )
 
 
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
@@ -292,38 +293,52 @@ class ConfigStore:
 
 
 class Config(BaseModel):
-    """OpsMesh Driver config adapter for base Jev/Agent settings and config.toml."""
+    """OpsMesh Driver config adapter for Jev, DecisionAgent, and ReplyAgent."""
 
     model_config = ConfigDict(extra="ignore")
 
     qq_admin_config: str = ""
     qq_admin_prompts: str = ""
     qq_admin_jev: JevConfig = Field(default_factory=JevConfig)
-    qq_admin_agent: AgentConfig = Field(default_factory=AgentConfig)
+    qq_admin_decision_agent: DecisionAgentConfig = Field(
+        default_factory=DecisionAgentConfig
+    )
+    qq_admin_reply_agent: ReplyAgentConfig = Field(default_factory=ReplyAgentConfig)
 
-    def build_store(self) -> tuple[JevConfig, AgentConfig, ConfigStore]:
+    def build_store(
+        self,
+    ) -> tuple[JevConfig, DecisionAgentConfig, ReplyAgentConfig, ConfigStore]:
         if self.qq_admin_config.strip():
             store = ConfigStore.from_toml(self.qq_admin_config.strip())
             jev_raw = store.load_section("jev")
-            agent_raw = store.load_section("agent")
-            jev_cfg = (
-                JevConfig.model_validate(jev_raw) if jev_raw else self.qq_admin_jev
+            dec_raw = store.load_section("decision_agent")
+            rep_raw = store.load_section("reply_agent")
+            return (
+                JevConfig.model_validate(jev_raw) if jev_raw else self.qq_admin_jev,
+                DecisionAgentConfig.model_validate(dec_raw)
+                if dec_raw
+                else self.qq_admin_decision_agent,
+                ReplyAgentConfig.model_validate(rep_raw)
+                if rep_raw
+                else self.qq_admin_reply_agent,
+                store,
             )
-            agent_cfg = (
-                AgentConfig.model_validate(agent_raw)
-                if agent_raw
-                else self.qq_admin_agent
-            )
-            return jev_cfg, agent_cfg, store
-        return self.qq_admin_jev, self.qq_admin_agent, ConfigStore()
+        return (
+            self.qq_admin_jev,
+            self.qq_admin_decision_agent,
+            self.qq_admin_reply_agent,
+            ConfigStore(),
+        )
 
 
 __all__ = [
-    "AgentConfig",
+    "BaseAgentConfig",
     "Config",
     "ConfigStore",
+    "DecisionAgentConfig",
     "JevConfig",
-    "SessionMode",
+    "ReasoningEffort",
+    "ReplyAgentConfig",
     "dump_toml",
     "parse_field_value",
 ]

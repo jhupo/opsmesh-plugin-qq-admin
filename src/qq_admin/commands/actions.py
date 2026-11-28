@@ -1,274 +1,202 @@
-"""Moderation action commands (/warn, /mute, /kick, /ban, /recall, /approve)."""
+"""Direct OpsMesh moderation action commands."""
 
-from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
-import re
-
-from opsmesh import on_regex
+from opsmesh import on_command
 from opsmesh.matcher import Matcher
 from qq import Gateway, GroupMessageEvent
 
-from qq_admin.manager import ServiceManager
-from qq_admin.modules import ActionOutcome, WarningCategory
+from qq_admin.modules import WarningCategory
 
-from .helpers import check_access, event_text, finish_reply, render_outcome
+from .helpers import command_args, finish_outcome, require_admin
 
-Action = Callable[..., Awaitable[ActionOutcome | str]]
+warn_cmd = on_command("warn", priority=1, block=True)
+mute_cmd = on_command("mute", priority=1, block=True)
+unmute_cmd = on_command("unmute", priority=1, block=True)
+kick_cmd = on_command("kick", priority=1, block=True)
+ban_cmd = on_command("ban", priority=1, block=True)
+unban_cmd = on_command("unban", priority=1, block=True)
+recall_cmd = on_command("recall", priority=1, block=True)
+approve_cmd = on_command("approve", priority=1, block=True)
+reject_cmd = on_command("reject", priority=1, block=True)
 
 
-async def warn(
-    gateway: Gateway,
-    event: GroupMessageEvent,
-    manager: ServiceManager,
-    *,
-    member: str,
-    category: str | None = None,
-    reason: str | None = None,
-) -> ActionOutcome:
-    kind: WarningCategory = (
-        "ad" if category == "ad" else ("abuse" if category == "abuse" else "spam")
-    )
-    return await manager.moderation.warn(
+@warn_cmd.handle()
+async def handle_warn(
+    gateway: Gateway, event: GroupMessageEvent, matcher: Matcher
+) -> None:
+    manager = await require_admin(gateway, event, matcher, "warn")
+    args = command_args(event)
+    if not args:
+        await matcher.finish("Usage: /warn <member> [spam|abuse|ad] [reason]")
+    member = args[0].lstrip("@")
+    category: WarningCategory = "spam"
+    reason_tokens = args[1:]
+    if reason_tokens and reason_tokens[0].lower() in {"spam", "abuse", "ad"}:
+        raw_cat = reason_tokens[0].lower()
+        category = (
+            "ad" if raw_cat == "ad" else ("abuse" if raw_cat == "abuse" else "spam")
+        )
+        reason_tokens = reason_tokens[1:]
+    outcome = await manager.moderation.warn(
         gateway,
         event.group_openid,
         member,
-        category=kind,
-        reason=reason or "manual warning",
+        category=category,
+        reason=" ".join(reason_tokens) or "manual warning",
         operator_id=event.get_user_id(),
     )
+    await finish_outcome(gateway, event, matcher, manager, outcome, target_id=member)
 
 
-async def mute(
-    gateway: Gateway,
-    event: GroupMessageEvent,
-    manager: ServiceManager,
-    *,
-    member: str,
-    duration: str | None = None,
-    reason: str | None = None,
-) -> ActionOutcome:
-    return await manager.moderation.mute(
+@mute_cmd.handle()
+async def handle_mute(
+    gateway: Gateway, event: GroupMessageEvent, matcher: Matcher
+) -> None:
+    manager = await require_admin(gateway, event, matcher, "mute")
+    args = command_args(event)
+    if not args:
+        await matcher.finish("Usage: /mute <member> [10m|2h|1d] [reason]")
+    member = args[0].lstrip("@")
+    duration = args[1] if len(args) >= 2 else "10m"
+    reason = " ".join(args[2:]) or "manual mute"
+    outcome = await manager.moderation.mute(
         gateway,
         event.group_openid,
         member,
-        duration=duration or "10m",
-        reason=reason or "manual mute",
+        duration=duration,
+        reason=reason,
         operator_id=event.get_user_id(),
     )
+    await finish_outcome(gateway, event, matcher, manager, outcome, target_id=member)
 
 
-async def unmute(
-    gateway: Gateway, event: GroupMessageEvent, manager: ServiceManager, *, member: str
-) -> ActionOutcome:
-    return await manager.moderation.unmute(
+@unmute_cmd.handle()
+async def handle_unmute(
+    gateway: Gateway, event: GroupMessageEvent, matcher: Matcher
+) -> None:
+    manager = await require_admin(gateway, event, matcher, "unmute")
+    args = command_args(event)
+    if not args:
+        await matcher.finish("Usage: /unmute <member>")
+    member = args[0].lstrip("@")
+    outcome = await manager.moderation.unmute(
         gateway, event.group_openid, member, operator_id=event.get_user_id()
     )
+    await finish_outcome(gateway, event, matcher, manager, outcome, target_id=member)
 
 
-async def kick(
-    gateway: Gateway,
-    event: GroupMessageEvent,
-    manager: ServiceManager,
-    *,
-    member: str,
-    reason: str | None = None,
-) -> ActionOutcome:
-    return await manager.moderation.kick(
+@kick_cmd.handle()
+async def handle_kick(
+    gateway: Gateway, event: GroupMessageEvent, matcher: Matcher
+) -> None:
+    manager = await require_admin(gateway, event, matcher, "kick")
+    args = command_args(event)
+    if not args:
+        await matcher.finish("Usage: /kick <member> [reason]")
+    member = args[0].lstrip("@")
+    reason = " ".join(args[1:]) or "manual kick"
+    outcome = await manager.moderation.kick(
         gateway,
         event.group_openid,
         member,
-        reason=reason or "manual kick",
+        reason=reason,
         operator_id=event.get_user_id(),
     )
+    await finish_outcome(gateway, event, matcher, manager, outcome, target_id=member)
 
 
-async def ban(
-    gateway: Gateway,
-    event: GroupMessageEvent,
-    manager: ServiceManager,
-    *,
-    member: str,
-    reason: str | None = None,
-) -> ActionOutcome:
-    return await manager.moderation.ban(
+@ban_cmd.handle()
+async def handle_ban(
+    gateway: Gateway, event: GroupMessageEvent, matcher: Matcher
+) -> None:
+    manager = await require_admin(gateway, event, matcher, "ban")
+    args = command_args(event)
+    if not args:
+        await matcher.finish("Usage: /ban <member> [reason]")
+    member = args[0].lstrip("@")
+    reason = " ".join(args[1:]) or "manual ban"
+    outcome = await manager.moderation.ban(
         gateway,
         event.group_openid,
         member,
-        reason=reason or "manual ban",
+        reason=reason,
         operator_id=event.get_user_id(),
     )
+    await finish_outcome(gateway, event, matcher, manager, outcome, target_id=member)
 
 
-async def unban(
-    gateway: Gateway, event: GroupMessageEvent, manager: ServiceManager, *, member: str
-) -> ActionOutcome:
-    return await manager.moderation.unban(
+@unban_cmd.handle()
+async def handle_unban(
+    gateway: Gateway, event: GroupMessageEvent, matcher: Matcher
+) -> None:
+    manager = await require_admin(gateway, event, matcher, "unban")
+    args = command_args(event)
+    if not args:
+        await matcher.finish("Usage: /unban <member>")
+    member = args[0].lstrip("@")
+    outcome = await manager.moderation.unban(
         gateway, event.group_openid, member, operator_id=event.get_user_id()
     )
+    await finish_outcome(gateway, event, matcher, manager, outcome, target_id=member)
 
 
-async def recall(
-    gateway: Gateway,
-    event: GroupMessageEvent,
-    manager: ServiceManager,
-    *,
-    message_id: str | None = None,
-    reason: str | None = None,
-) -> ActionOutcome | str:
-    reference = event.message_reference
-    target = message_id or (reference.message_id if reference else "")
-    if not target:
-        return "Usage: /recall <message_id> (or reply to the message)"
-    return await manager.moderation.recall(
+@recall_cmd.handle()
+async def handle_recall(
+    gateway: Gateway, event: GroupMessageEvent, matcher: Matcher
+) -> None:
+    manager = await require_admin(gateway, event, matcher, "recall")
+    args = command_args(event)
+    ref = event.message_reference
+    message_id = args[0] if args else (ref.message_id if ref else "")
+    if not message_id:
+        await matcher.finish("Usage: /recall <message_id> (or reply to target message)")
+    reason = " ".join(args[1:]) or "manual recall"
+    outcome = await manager.moderation.recall(
         gateway,
         event.group_openid,
-        target,
-        reason=reason or "manual recall",
+        message_id,
+        reason=reason,
         operator_id=event.get_user_id(),
+    )
+    await finish_outcome(
+        gateway, event, matcher, manager, outcome, target_id=message_id
     )
 
 
-async def approve(
-    gateway: Gateway,
-    event: GroupMessageEvent,
-    manager: ServiceManager,
-    *,
-    member: str,
-    request_id: str | None = None,
-) -> ActionOutcome:
-    return await manager.approval.approve(
+@approve_cmd.handle()
+async def handle_approve(
+    gateway: Gateway, event: GroupMessageEvent, matcher: Matcher
+) -> None:
+    manager = await require_admin(gateway, event, matcher, "approve")
+    args = command_args(event)
+    if not args:
+        await matcher.finish("Usage: /approve <member> [join_request_id]")
+    member = args[0].lstrip("@")
+    request_id = args[1] if len(args) >= 2 else None
+    outcome = await manager.approval.approve(
         gateway,
         event.group_openid,
         member,
         request_id=request_id,
         operator_id=event.get_user_id(),
     )
+    await finish_outcome(gateway, event, matcher, manager, outcome, target_id=member)
 
 
-async def reject(
-    gateway: Gateway,
-    event: GroupMessageEvent,
-    manager: ServiceManager,
-    *,
-    member: str,
-    reason: str | None = None,
-) -> ActionOutcome:
-    return await manager.approval.reject(
+@reject_cmd.handle()
+async def handle_reject(
+    gateway: Gateway, event: GroupMessageEvent, matcher: Matcher
+) -> None:
+    manager = await require_admin(gateway, event, matcher, "reject")
+    args = command_args(event)
+    if not args:
+        await matcher.finish("Usage: /reject <member> [reason]")
+    member = args[0].lstrip("@")
+    reason = " ".join(args[1:]) or "manual reject"
+    outcome = await manager.approval.reject(
         gateway,
         event.group_openid,
         member,
-        reason=reason or "manual reject",
+        reason=reason,
         operator_id=event.get_user_id(),
     )
-
-
-@dataclass(frozen=True, slots=True)
-class ActionCommand:
-    name: str
-    pattern: re.Pattern[str]
-    usage: str
-    run: Action
-
-
-_MEMBER = r"@?(?P<member>\S+)"
-_REASON = r"(?:\s+(?P<reason>.+))?"
-
-ACTION_COMMANDS = [
-    ActionCommand(
-        "warn",
-        re.compile(
-            rf"^/warn\s+{_MEMBER}(?:\s+(?P<category>spam|abuse|ad))?{_REASON}$", re.I
-        ),
-        "/warn <member> [spam|abuse|ad] [reason]",
-        warn,
-    ),
-    ActionCommand(
-        "mute",
-        re.compile(
-            rf"^/mute\s+{_MEMBER}(?:\s+(?P<duration>\d+[smhd]?))?{_REASON}$", re.I
-        ),
-        "/mute <member> [10m|2h|1d] [reason]",
-        mute,
-    ),
-    ActionCommand(
-        "unmute",
-        re.compile(rf"^/unmute\s+{_MEMBER}$", re.I),
-        "/unmute <member>",
-        unmute,
-    ),
-    ActionCommand(
-        "kick",
-        re.compile(rf"^/kick\s+{_MEMBER}{_REASON}$", re.I),
-        "/kick <member> [reason]",
-        kick,
-    ),
-    ActionCommand(
-        "ban",
-        re.compile(rf"^/ban\s+{_MEMBER}{_REASON}$", re.I),
-        "/ban <member> [reason]",
-        ban,
-    ),
-    ActionCommand(
-        "unban", re.compile(rf"^/unban\s+{_MEMBER}$", re.I), "/unban <member>", unban
-    ),
-    ActionCommand(
-        "recall",
-        re.compile(r"^/recall(?:\s+(?P<message_id>\S+))?" + _REASON + "$", re.I),
-        "/recall [message_id] [reason]",
-        recall,
-    ),
-    ActionCommand(
-        "approve",
-        re.compile(rf"^/approve\s+{_MEMBER}(?:\s+(?P<request_id>\S+))?$", re.I),
-        "/approve <member> [join_request_id]",
-        approve,
-    ),
-    ActionCommand(
-        "reject",
-        re.compile(rf"^/reject\s+{_MEMBER}{_REASON}$", re.I),
-        "/reject <member> [reason]",
-        reject,
-    ),
-]
-
-
-async def run_action(
-    command: ActionCommand,
-    gateway: Gateway,
-    event: GroupMessageEvent,
-    manager: ServiceManager,
-) -> str | None:
-    """Authorize, parse arguments, execute, and render one action command."""
-    allowed, denial = await check_access(
-        gateway, event, manager, minimum_role="admin", command_name=command.name
-    )
-    if not allowed:
-        return denial
-    match = command.pattern.match(event_text(event))
-    if match is None:
-        return f"Usage: {command.usage}"
-    arguments = {k: v.strip() for k, v in match.groupdict().items() if v}
-    result = await command.run(gateway, event, manager, **arguments)
-    if isinstance(result, str):
-        return result
-    target = arguments.get("member") or arguments.get("message_id", "")
-    return await render_outcome(gateway, event, manager, result, target_id=target)
-
-
-def _endpoint(command: ActionCommand, manager: ServiceManager):
-    async def _handle(
-        gateway: Gateway, event: GroupMessageEvent, matcher: Matcher
-    ) -> None:
-        await finish_reply(matcher, await run_action(command, gateway, event, manager))
-
-    return _handle
-
-
-def bind_action_commands(manager: ServiceManager) -> None:
-    for command in ACTION_COMMANDS:
-        on_regex(
-            rf"^/{command.name}(?:\s|$)", flags=re.IGNORECASE, priority=1, block=True
-        ).append_handler(_endpoint(command, manager))
-
-
-__all__ = ["ACTION_COMMANDS", "ActionCommand", "bind_action_commands", "run_action"]
+    await finish_outcome(gateway, event, matcher, manager, outcome, target_id=member)

@@ -1,4 +1,4 @@
-"""System 2 Agent 2: ReplyAgent for dynamic, persona-driven moderation replies."""
+"""System 2 Agent 2: ReplyAgent for stateless persona-driven replies."""
 
 from dataclasses import dataclass, field
 import json
@@ -12,11 +12,11 @@ from agents import (
     OpenAIResponsesModel,
     OutputGuardrailTripwireTriggered,
     Runner,
-    SQLiteSession,
 )
 from openai import AsyncOpenAI
+from openai.types.shared import Reasoning
 
-from qq_admin.config import AgentConfig, ConfigStore, SessionMode
+from qq_admin.config import ReplyAgentConfig
 
 from .guardrails import reply_guardrail
 
@@ -41,56 +41,23 @@ class ReplySpec:
 
 
 class ReplyAgent:
-    """Encapsulates OpenAI Agents SDK reply composer with configurable sessions."""
+    """Stateless OpenAI Agents SDK reply composer with ReplyAgentConfig."""
 
     def __init__(
         self,
-        config: AgentConfig,
-        store: ConfigStore,
+        config: ReplyAgentConfig,
         *,
         client: AsyncOpenAI | None = None,
     ) -> None:
         self.config = config
-        self._store = store
         self._client = client
         self._owns_client = client is None
-        self._sessions: dict[str, SQLiteSession] = {}
 
     @property
     def is_ready(self) -> bool:
         if self._client is not None:
             return True
         return bool(self.config.secret_value or os.environ.get("OPENAI_API_KEY", ""))
-
-    def session_mode(self, group_id: str | None = None) -> SessionMode:
-        raw = self._store.load_section("agent", group_id=group_id)
-        mode = raw.get("session_mode", self.config.session_mode)
-        return "shared" if mode == "shared" else "fresh"
-
-    def set_session_mode(
-        self, mode: SessionMode, *, group_id: str | None = None
-    ) -> SessionMode:
-        raw = self._store.load_section("agent", group_id=group_id)
-        raw["session_mode"] = mode
-        self._store.save_section("agent", raw, group_id=group_id)
-        if group_id is None:
-            self.config = self.config.model_copy(update={"session_mode": mode})
-        return mode
-
-    def _get_session(self, session_key: str) -> SQLiteSession:
-        session = self._sessions.get(session_key)
-        if session is None:
-            session = SQLiteSession(
-                session_id=session_key,
-                db_path=self.config.session_db_path,
-            )
-            self._sessions[session_key] = session
-        return session
-
-    async def reset_session(self, session_key: str) -> None:
-        session = self._sessions.pop(session_key, None)
-        if session is not None:
-            await session.clear_session()
 
     def _get_client(self) -> AsyncOpenAI:
         if self._client is None:
@@ -107,18 +74,21 @@ class ReplyAgent:
 
     def _build_model(self) -> OpenAIChatCompletionsModel | OpenAIResponsesModel:
         client = self._get_client()
-        model_name = self.config.effective_reply_model
         if self.config.use_chat_completions:
-            return OpenAIChatCompletionsModel(model=model_name, openai_client=client)
-        return OpenAIResponsesModel(model=model_name, openai_client=client)
+            return OpenAIChatCompletionsModel(
+                model=self.config.model, openai_client=client
+            )
+        return OpenAIResponsesModel(model=self.config.model, openai_client=client)
 
-    async def execute(
-        self,
-        spec: ReplySpec,
-        *,
-        session_key: str | None = None,
-        session_mode: SessionMode | None = None,
-    ) -> str:
+    def _model_settings(self) -> ModelSettings:
+        reasoning = (
+            Reasoning(effort=self.config.reasoning_effort)
+            if self.config.reasoning_effort
+            else None
+        )
+        return ModelSettings(temperature=self.config.temperature, reasoning=reasoning)
+
+    async def execute(self, spec: ReplySpec) -> str:
         """Generate one natural, non-repetitive group admin reply."""
         if not self.is_ready:
             return spec.fallback
@@ -126,7 +96,7 @@ class ReplyAgent:
         sg_cfg = spec.manager.safeguard.config(spec.group_id)
         daily = spec.manager.safeguard.daily_counts(spec.group_id)
         catalog = spec.manager.catalog
-        persona = self.config.reply_persona.strip() or catalog.composer_persona()
+        persona = self.config.persona.strip() or catalog.composer_persona()
         instructions = catalog.composer_instructions(
             persona=persona,
             group_id=spec.group_id,
@@ -145,7 +115,7 @@ class ReplyAgent:
             name="QQGroupReplyAgent",
             instructions=instructions,
             model=self._build_model(),
-            model_settings=ModelSettings(temperature=self.config.reply_temperature),
+            model_settings=self._model_settings(),
             output_guardrails=[reply_guardrail],
         )
 
@@ -154,20 +124,12 @@ class ReplyAgent:
             "executed_actions": spec.executed_actions,
             "facts": spec.facts,
         }
-        mode = session_mode or self.session_mode(spec.group_id)
-        session = (
-            self._get_session(session_key or f"reply:{spec.group_id}")
-            if mode == "shared"
-            else None
-        )
-
         try:
             result = await Runner.run(
                 agent,
                 input=json.dumps(payload, ensure_ascii=False),
                 context=spec,
-                max_turns=2,
-                session=session,
+                max_turns=self.config.max_turns,
             )
             text = str(result.final_output or "").strip()
             return text or spec.fallback

@@ -1,19 +1,20 @@
 # Commands & Programmatic API
 
+All management commands are directly registered via `opsmesh.on_command(...)` and open exclusively to administrators (configured global admins, group owners, and group admins).
+
 ## Slash Commands
 
-### `/admin` Console (Global Admin / Group Owner)
-- `/admin status [group_id]` — Group status, bot role, session mode, and daily counters
+### `/admin` Console
+- `/admin status [group_id]` — Group status, bot role, and daily counters
 - `/admin on [group_id]` / `/admin off [group_id]` — Enable or disable group administration
 - `/admin config get <module>[.<field>]` — Inspect module configuration for current group
 - `/admin config set <module>.<field> <value>` — Update and persist module configuration online
-- `/admin session [mode fresh|shared | reset]` — Switch or reset Agent session history
 - `/admin log [n]` — Show recent audit records
-- `/admin perm [member]` — Print authorization decision trace
+- `/admin perm [member]` — Print admin status trace
 - `/admin exempt <member>` / `/admin unexempt <member>` — Manage per-group exempt list
 - `/admin undo <member>` — Clear warnings and lift mute
 
-### Action Commands (Group Admin / Owner / Global Admin)
+### Action Commands
 - `/warn <member> [spam|abuse|ad] [reason]`
 - `/mute <member> [10m|2h|1d] [reason]` / `/unmute <member>`
 - `/kick <member> [reason]`
@@ -26,16 +27,3 @@
 - `/blacklist` — Group blacklist
 - `/requests` — Pending join requests
 - `/member <member>` — Member role and join timestamp
-
-## Programmatic Usage
-
-```python
-from typesafe_sdk import AsyncTypeSafeClient
-from openai import AsyncOpenAI
-import qq_admin
-
-manager = qq_admin.configure(
-    jev_client=AsyncTypeSafeClient(api_key="ts-..."),
-    openai_client=AsyncOpenAI(api_key="sk-..."),
-)
-```

@@ -8,15 +8,23 @@ model = "jev-1"
 proxy = ""
 timeout_seconds = 10.0
 
-[agent]
+[decision_agent]
 api_key = ""
 base_url = ""
-decision_model = "gpt-5-mini"
-reply_model = ""
-reply_temperature = 0.7
-reply_persona = ""
+model = "gpt-5-mini"
+reasoning_effort = "low"
+temperature = 0.0
 use_chat_completions = false
 timeout_seconds = 30.0
 max_turns = 6
-session_mode = "fresh"
-session_db_path = ":memory:"
+
+[reply_agent]
+api_key = ""
+base_url = ""
+model = "gpt-5-mini"
+reasoning_effort = "low"
+temperature = 0.7
+persona = ""
+use_chat_completions = false
+timeout_seconds = 30.0
+max_turns = 2

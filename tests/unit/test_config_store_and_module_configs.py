@@ -1,4 +1,4 @@
-"""Tests for minimal config.toml, ConfigStore persistence, and module-owned configs."""
+"""Tests for minimal config.toml, BaseAgentConfig inheritance, and module configs."""
 
 from pathlib import Path
 
@@ -8,11 +8,13 @@ import qq_admin
 from qq_admin import (
     DEFAULT_CONFIG_PATH,
     DEFAULT_PROMPTS_PATH,
-    AgentConfig,
+    BaseAgentConfig,
     ConfigError,
     ConfigStore,
+    DecisionAgentConfig,
     JevConfig,
     PromptCatalog,
+    ReplyAgentConfig,
     ServiceManager,
 )
 
@@ -20,11 +22,17 @@ from qq_admin import (
 def test_minimal_default_config_and_clean_exports() -> None:
     store = ConfigStore.from_toml(DEFAULT_CONFIG_PATH)
     raw = store.raw_data()
-    assert set(raw.keys()) == {"jev", "agent"}
+    assert set(raw.keys()) == {"jev", "decision_agent", "reply_agent"}
     assert JevConfig.model_validate(raw["jev"]).model == "jev-1"
-    agent_cfg = AgentConfig.model_validate(raw["agent"])
-    assert agent_cfg.session_mode == "fresh"
-    assert agent_cfg.decision_model == "gpt-5-mini"
+
+    dec_cfg = DecisionAgentConfig.model_validate(raw["decision_agent"])
+    rep_cfg = ReplyAgentConfig.model_validate(raw["reply_agent"])
+    assert isinstance(dec_cfg, BaseAgentConfig)
+    assert isinstance(rep_cfg, BaseAgentConfig)
+    assert dec_cfg.temperature == 0.0
+    assert dec_cfg.reasoning_effort == "low"
+    assert rep_cfg.temperature == 0.7
+    assert rep_cfg.max_turns == 2
 
     assert qq_admin.__plugin_meta__.type == "application"
     assert qq_admin.__plugin_meta__.supported_adapters == {"qq"}
@@ -46,7 +54,6 @@ def test_module_owned_config_persistence_and_group_isolation(tmp_path: Path) -> 
     assert manager.is_group_enabled("G1")
     assert not manager.is_group_enabled("G2")
 
-    # Module owns its own defaults and per-group online updates
     assert manager.safeguard.config("G1").max_mute_duration == 3600
     updated = manager.safeguard.update_config("G1", "max_mute_duration", "1800")
     assert updated.max_mute_duration == 1800
@@ -55,7 +62,6 @@ def test_module_owned_config_persistence_and_group_isolation(tmp_path: Path) -> 
     manager.approval.update_config("G1", "enabled", "true")
     manager.approval.update_config("G1", "default_action", "approve")
 
-    # Reload from disk to verify TOML persistence
     reloaded = ServiceManager(store=ConfigStore.from_toml(toml_file))
     assert reloaded.is_group_enabled("G1")
     assert reloaded.safeguard.config("G1").max_mute_duration == 1800

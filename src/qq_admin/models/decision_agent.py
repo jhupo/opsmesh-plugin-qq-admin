@@ -1,4 +1,4 @@
-"""System 2 Agent 1: DecisionAgent for tool-calling moderation decisions."""
+"""System 2 Agent 1: DecisionAgent for stateless tool-calling decisions."""
 
 from dataclasses import dataclass, field
 import os
@@ -11,13 +11,13 @@ from agents import (
     OpenAIChatCompletionsModel,
     OpenAIResponsesModel,
     Runner,
-    SQLiteSession,
 )
 from openai import AsyncOpenAI
+from openai.types.shared import Reasoning
 from pydantic import BaseModel, Field
 from qq import Gateway
 
-from qq_admin.config import AgentConfig, ConfigStore, SessionMode
+from qq_admin.config import DecisionAgentConfig
 
 from .guardrails import injection_guardrail
 from .tools import GROUP_ADMIN_TOOLS
@@ -59,56 +59,23 @@ class DecisionOutcome(BaseModel):
 
 
 class DecisionAgent:
-    """Encapsulates OpenAI Agents SDK decision runner with configurable sessions."""
+    """Stateless OpenAI Agents SDK decision runner with DecisionAgentConfig."""
 
     def __init__(
         self,
-        config: AgentConfig,
-        store: ConfigStore,
+        config: DecisionAgentConfig,
         *,
         client: AsyncOpenAI | None = None,
     ) -> None:
         self.config = config
-        self._store = store
         self._client = client
         self._owns_client = client is None
-        self._sessions: dict[str, SQLiteSession] = {}
 
     @property
     def is_ready(self) -> bool:
         if self._client is not None:
             return True
         return bool(self.config.secret_value or os.environ.get("OPENAI_API_KEY", ""))
-
-    def session_mode(self, group_id: str | None = None) -> SessionMode:
-        raw = self._store.load_section("agent", group_id=group_id)
-        mode = raw.get("session_mode", self.config.session_mode)
-        return "shared" if mode == "shared" else "fresh"
-
-    def set_session_mode(
-        self, mode: SessionMode, *, group_id: str | None = None
-    ) -> SessionMode:
-        raw = self._store.load_section("agent", group_id=group_id)
-        raw["session_mode"] = mode
-        self._store.save_section("agent", raw, group_id=group_id)
-        if group_id is None:
-            self.config = self.config.model_copy(update={"session_mode": mode})
-        return mode
-
-    def _get_session(self, session_key: str) -> SQLiteSession:
-        session = self._sessions.get(session_key)
-        if session is None:
-            session = SQLiteSession(
-                session_id=session_key,
-                db_path=self.config.session_db_path,
-            )
-            self._sessions[session_key] = session
-        return session
-
-    async def reset_session(self, session_key: str) -> None:
-        session = self._sessions.pop(session_key, None)
-        if session is not None:
-            await session.clear_session()
 
     def _get_client(self) -> AsyncOpenAI:
         if self._client is None:
@@ -127,25 +94,21 @@ class DecisionAgent:
         client = self._get_client()
         if self.config.use_chat_completions:
             return OpenAIChatCompletionsModel(
-                model=self.config.decision_model,
-                openai_client=client,
+                model=self.config.model, openai_client=client
             )
-        return OpenAIResponsesModel(
-            model=self.config.decision_model,
-            openai_client=client,
-        )
+        return OpenAIResponsesModel(model=self.config.model, openai_client=client)
 
-    async def execute(
-        self,
-        prompt: str,
-        *,
-        context: TurnContext,
-        session_key: str | None = None,
-        session_mode: SessionMode | None = None,
-    ) -> DecisionOutcome:
-        """Execute one decision turn using fresh or shared session strategy."""
+    def _model_settings(self) -> ModelSettings:
+        reasoning = (
+            Reasoning(effort=self.config.reasoning_effort)
+            if self.config.reasoning_effort
+            else None
+        )
+        return ModelSettings(temperature=self.config.temperature, reasoning=reasoning)
+
+    async def execute(self, prompt: str, *, context: TurnContext) -> DecisionOutcome:
+        """Execute one stateless moderation decision turn."""
         catalog = context.manager.catalog
-        role_policy = catalog.role_policy(context.bot_role)
         recent_ops = context.manager.audit.count_member_actions(
             context.group_id, context.member_id, within_hours=24.0
         )
@@ -153,7 +116,7 @@ class DecisionAgent:
             context.mode,
             group_id=context.group_id,
             bot_role=context.bot_role,
-            role_policy=role_policy,
+            role_policy=catalog.role_policy(context.bot_role),
             member_id=context.member_id,
             sender_role=context.sender_role,
             recent_ops=recent_ops,
@@ -164,17 +127,10 @@ class DecisionAgent:
             name="QQGroupDecisionAgent",
             instructions=instructions,
             model=self._build_model(),
-            model_settings=ModelSettings(temperature=0.0),
+            model_settings=self._model_settings(),
             tools=GROUP_ADMIN_TOOLS,
             input_guardrails=[injection_guardrail],
             output_type=DecisionOutcome,
-        )
-
-        mode = session_mode or self.session_mode(context.group_id)
-        session = (
-            self._get_session(session_key or f"decision:{context.group_id}")
-            if mode == "shared"
-            else None
         )
 
         try:
@@ -183,7 +139,6 @@ class DecisionAgent:
                 input=prompt,
                 context=context,
                 max_turns=self.config.max_turns,
-                session=session,
             )
         except InputGuardrailTripwireTriggered:
             return DecisionOutcome(

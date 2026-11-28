@@ -1,14 +1,13 @@
-"""Inbound entries: group messages and group lifecycle events."""
+"""Direct OpsMesh inbound entries (group messages and group lifecycle events)."""
 
-from qq_admin.manager import ServiceManager
+from . import group_events as group_events
+from . import group_message as group_message
+from .group_events import process_group_event as process_group_event
+from .group_message import process_group_message as process_group_message
 
-from .group_events import bind_group_events, handle_group_event
-from .group_message import bind_group_message, handle_group_message
-
-
-def bind_messages(manager: ServiceManager) -> None:
-    bind_group_message(manager)
-    bind_group_events(manager)
-
-
-__all__ = ["bind_messages", "handle_group_event", "handle_group_message"]
+__all__ = [
+    "group_events",
+    "group_message",
+    "process_group_event",
+    "process_group_message",
+]

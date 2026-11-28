@@ -304,9 +304,7 @@ class ModerationModule:
             sender_role=sender_role,
             mode="admin_command",
         )
-        decision = await self._manager.decision_agent.execute(
-            text, context=turn, session_key=f"admin:{group_id}:{member_id}"
-        )
+        decision = await self._manager.decision_agent.execute(text, context=turn)
         reply = await self._reply_for(turn, decision)
         return decision.action_taken or bool(reply), reply
 

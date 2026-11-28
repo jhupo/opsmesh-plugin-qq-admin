@@ -1,4 +1,4 @@
-"""Role-aware 8-step safety guardrail module with self-owned SafeguardConfig."""
+"""Role-aware safety guardrail module with self-owned SafeguardConfig."""
 
 from dataclasses import dataclass
 from datetime import date
@@ -43,8 +43,14 @@ class PolicyVerdict:
     bot_role: str = "member"
 
 
+def _block(blocked_by: str, reason: str, bot_role: str) -> PolicyVerdict:
+    return PolicyVerdict(
+        allowed=False, reason=reason, blocked_by=blocked_by, bot_role=bot_role
+    )
+
+
 class SafeguardModule:
-    """Enforces 8-step guardrails for admin bots and bypasses for group owners."""
+    """Enforces composed guardrail checks for admin bots; bypassed for group owners."""
 
     def __init__(
         self,
@@ -106,10 +112,8 @@ class SafeguardModule:
     def daily_counts(self, group_id: str) -> dict[str, int]:
         self._roll_day()
         return {
-            "mute": self._daily_counts.get((group_id, "mute"), 0),
-            "kick": self._daily_counts.get((group_id, "kick"), 0),
-            "approve": self._daily_counts.get((group_id, "approve"), 0),
-            "reject": self._daily_counts.get((group_id, "reject"), 0),
+            name: self._daily_counts.get((group_id, name), 0)
+            for name in ("mute", "kick", "approve", "reject")
         }
 
     def increment_daily(self, group_id: str, counter: str) -> int:
@@ -121,18 +125,8 @@ class SafeguardModule:
     def record_mute(self, group_id: str, member_id: str) -> None:
         self._mute_timestamps[(group_id, member_id)] = time.monotonic()
 
-    def last_mute_elapsed(self, group_id: str, member_id: str) -> float | None:
-        ts = self._mute_timestamps.get((group_id, member_id))
-        return None if ts is None else (time.monotonic() - ts)
-
     def mark_member_verified(self, group_id: str, member_id: str) -> None:
         self._verified_members[(group_id, member_id)] = time.monotonic()
-
-    def is_member_verified(
-        self, group_id: str, member_id: str, *, ttl_seconds: float = 300.0
-    ) -> bool:
-        ts = self._verified_members.get((group_id, member_id))
-        return ts is not None and (time.monotonic() - ts) <= ttl_seconds
 
     def clear_member(self, group_id: str, member_id: str) -> None:
         self._mute_timestamps.pop((group_id, member_id), None)
@@ -148,16 +142,14 @@ class SafeguardModule:
         mute_seconds: int | None = None,
         require_confirm: bool = False,
     ) -> PolicyVerdict:
+        """Run protection, action-specific quotas, and escalation checks."""
         bot_role = await self._identity.bot_role(gateway, group_id)
         if bot_role == "member":
-            return PolicyVerdict(
-                allowed=False,
-                reason="bot is not a group admin or owner",
-                blocked_by="bot_not_admin",
-                bot_role=bot_role,
+            return _block(
+                "bot_not_admin", "bot is not a group admin or owner", bot_role
             )
 
-        clamped_mute = (
+        clamped = (
             max(MIN_QQ_MUTE_SECONDS, min(mute_seconds, MAX_QQ_MUTE_SECONDS))
             if mute_seconds is not None
             else None
@@ -165,105 +157,123 @@ class SafeguardModule:
         cfg = self.config(group_id)
         if bot_role == "owner" or not cfg.enabled:
             return PolicyVerdict(
-                allowed=True,
-                effective_mute_seconds=clamped_mute,
-                bot_role=bot_role,
+                allowed=True, effective_mute_seconds=clamped, bot_role=bot_role
             )
 
-        id_cfg = self._identity.config(group_id)
-        if target_id in cfg.protected_users:
-            return PolicyVerdict(
-                allowed=False,
-                reason="target is in protected_users",
-                blocked_by="protected_users",
-                bot_role=bot_role,
-            )
-        if target_id in cfg.exempt_users:
-            return PolicyVerdict(
-                allowed=False,
-                reason="target is in group exempt_users",
-                blocked_by="exempt_users",
-                bot_role=bot_role,
-            )
-        if target_id in id_cfg.admins:
-            return PolicyVerdict(
-                allowed=False,
-                reason="target is a configured global admin",
-                blocked_by="admins",
-                bot_role=bot_role,
-            )
-        if cfg.auto_exempt_admins:
-            target_role = await self._identity.member_role(gateway, group_id, target_id)
-            if target_role in {"owner", "admin"}:
-                return PolicyVerdict(
-                    allowed=False,
-                    reason=f"target is group {target_role}",
-                    blocked_by="auto_exempt_admins",
-                    bot_role=bot_role,
-                )
+        if blocked := await self._check_protection(
+            gateway, group_id, target_id, cfg, bot_role
+        ):
+            return blocked
 
         if action == "mute":
-            elapsed = self.last_mute_elapsed(group_id, target_id)
-            if elapsed is not None and elapsed < cfg.mute_cooldown:
-                remaining = int(cfg.mute_cooldown - elapsed)
-                return PolicyVerdict(
-                    allowed=False,
-                    reason=f"mute cooldown active ({remaining}s remaining)",
-                    blocked_by="mute_cooldown",
-                    bot_role=bot_role,
-                )
-            if self.daily_count(group_id, "mute") >= cfg.daily_mute_limit:
-                return PolicyVerdict(
-                    allowed=False,
-                    reason="daily mute limit reached",
-                    blocked_by="daily_mute_limit",
-                    bot_role=bot_role,
-                )
-            if clamped_mute is not None:
-                clamped_mute = min(clamped_mute, cfg.max_mute_duration)
-
-        if action in {"kick", "ban"}:
-            if self.daily_count(group_id, "kick") >= cfg.daily_kick_limit:
-                return PolicyVerdict(
-                    allowed=False,
-                    reason="daily kick limit reached",
-                    blocked_by="daily_kick_limit",
-                    bot_role=bot_role,
-                )
-            if (
-                action == "kick"
-                and require_confirm
-                and cfg.kick_require_confirm
-                and not self.is_member_verified(group_id, target_id)
+            blocked, clamped = self._check_mute_rules(
+                group_id, target_id, clamped, cfg, bot_role
+            )
+            if blocked:
+                return blocked
+        elif action in {"kick", "ban"}:
+            if blocked := self._check_kick_rules(
+                group_id, target_id, action, require_confirm, cfg, bot_role
             ):
-                return PolicyVerdict(
-                    allowed=False,
-                    reason="kick requires calling get_member first",
-                    blocked_by="kick_require_confirm",
-                    bot_role=bot_role,
-                )
+                return blocked
 
-        escalated_action: str | None = None
-        step = self._escalation.resolve_step(group_id, target_id)
-        if step is not None:
-            escalated_action = step.action
-            if step.action == "mute" and clamped_mute is not None:
-                clamped_mute = min(
-                    max(clamped_mute, step.mute_seconds),
-                    cfg.max_mute_duration,
-                )
-
+        escalated, clamped = self._apply_escalation(group_id, target_id, clamped, cfg)
         return PolicyVerdict(
             allowed=True,
-            effective_mute_seconds=clamped_mute,
-            escalated_action=escalated_action,
+            effective_mute_seconds=clamped,
+            escalated_action=escalated,
             bot_role=bot_role,
         )
 
+    async def _check_protection(
+        self,
+        gateway: Gateway,
+        group_id: str,
+        target_id: str,
+        cfg: SafeguardConfig,
+        bot_role: str,
+    ) -> PolicyVerdict | None:
+        if target_id in cfg.protected_users:
+            return _block("protected_users", "target is in protected_users", bot_role)
+        if target_id in cfg.exempt_users:
+            return _block("exempt_users", "target is in group exempt_users", bot_role)
+        if cfg.auto_exempt_admins and await self._identity.is_admin(
+            gateway, group_id, target_id
+        ):
+            return _block("auto_exempt_admins", "target is an admin or owner", bot_role)
+        return None
 
-__all__ = [
-    "GuardAction",
-    "PolicyVerdict",
-    "SafeguardConfig",
-    "SafeguardModule",
-]
+    def _check_mute_rules(
+        self,
+        group_id: str,
+        target_id: str,
+        mute_seconds: int | None,
+        cfg: SafeguardConfig,
+        bot_role: str,
+    ) -> tuple[PolicyVerdict | None, int | None]:
+        ts = self._mute_timestamps.get((group_id, target_id))
+        if ts is not None:
+            elapsed = time.monotonic() - ts
+            if elapsed < cfg.mute_cooldown:
+                remaining = int(cfg.mute_cooldown - elapsed)
+                return (
+                    _block(
+                        "mute_cooldown", f"mute cooldown ({remaining}s left)", bot_role
+                    ),
+                    mute_seconds,
+                )
+        if self.daily_count(group_id, "mute") >= cfg.daily_mute_limit:
+            return _block(
+                "daily_mute_limit", "daily mute limit reached", bot_role
+            ), mute_seconds
+        capped = (
+            min(mute_seconds, cfg.max_mute_duration)
+            if mute_seconds is not None
+            else None
+        )
+        return None, capped
+
+    def _check_kick_rules(
+        self,
+        group_id: str,
+        target_id: str,
+        action: str,
+        require_confirm: bool,
+        cfg: SafeguardConfig,
+        bot_role: str,
+    ) -> PolicyVerdict | None:
+        if self.daily_count(group_id, "kick") >= cfg.daily_kick_limit:
+            return _block("daily_kick_limit", "daily kick limit reached", bot_role)
+        verified_at = self._verified_members.get((group_id, target_id))
+        is_verified = (
+            verified_at is not None and (time.monotonic() - verified_at) <= 300.0
+        )
+        if (
+            action == "kick"
+            and require_confirm
+            and cfg.kick_require_confirm
+            and not is_verified
+        ):
+            return _block(
+                "kick_require_confirm", "call get_member before kicking", bot_role
+            )
+        return None
+
+    def _apply_escalation(
+        self,
+        group_id: str,
+        target_id: str,
+        mute_seconds: int | None,
+        cfg: SafeguardConfig,
+    ) -> tuple[str | None, int | None]:
+        step = self._escalation.resolve_step(group_id, target_id)
+        if step is None:
+            return None, mute_seconds
+        if step.action == "mute" and mute_seconds is not None:
+            mute_seconds = min(
+                max(mute_seconds, step.mute_seconds), cfg.max_mute_duration
+            )
+        return step.action, mute_seconds
+
+
+__all__ = ["GuardAction", "PolicyVerdict", "SafeguardConfig", "SafeguardModule"]

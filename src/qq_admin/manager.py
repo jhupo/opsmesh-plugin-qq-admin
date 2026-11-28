@@ -2,10 +2,14 @@
 
 from openai import AsyncOpenAI
 
-from qq_admin.config import AgentConfig, ConfigStore, JevConfig
+from qq_admin.config import (
+    ConfigStore,
+    DecisionAgentConfig,
+    JevConfig,
+    ReplyAgentConfig,
+)
 from qq_admin.exception import ConfigError
-from qq_admin.models import DecisionAgent, Jev, ReplyAgent
-from qq_admin.models.jev import AsyncTypeSafeClient
+from qq_admin.models import AsyncTypeSafeClient, DecisionAgent, Jev, ReplyAgent
 from qq_admin.modules import (
     ApprovalModule,
     AuditModule,
@@ -26,21 +30,23 @@ class ServiceManager:
         self,
         *,
         jev_config: JevConfig | None = None,
-        agent_config: AgentConfig | None = None,
+        decision_config: DecisionAgentConfig | None = None,
+        reply_config: ReplyAgentConfig | None = None,
         store: ConfigStore | None = None,
         prompts_path: str | None = None,
         jev_client: AsyncTypeSafeClient | None = None,
         openai_client: AsyncOpenAI | None = None,
     ) -> None:
-        agent_config = agent_config or AgentConfig()
         self.store = store or ConfigStore()
         self.catalog = PromptCatalog.load(prompts_path)
 
         self.jev = Jev(jev_config or JevConfig(), client=jev_client)
         self.decision_agent = DecisionAgent(
-            agent_config, self.store, client=openai_client
+            decision_config or DecisionAgentConfig(), client=openai_client
         )
-        self.reply_agent = ReplyAgent(agent_config, self.store, client=openai_client)
+        self.reply_agent = ReplyAgent(
+            reply_config or ReplyAgentConfig(), client=openai_client
+        )
 
         self.identity = IdentityModule(self.store)
         self.audit = AuditModule(self.store)
@@ -50,14 +56,12 @@ class ServiceManager:
         self.moderation = ModerationModule(self.store, self)
         self.approval = ApprovalModule(self.store, self)
 
-    # ---- group switch ----
     def is_group_enabled(self, group_id: str) -> bool:
         return self.store.is_group_enabled(group_id)
 
     def set_group_enabled(self, group_id: str, enabled: bool) -> None:
         self.store.set_group_enabled(group_id, enabled)
 
-    # ---- online module configuration ----
     def configurable_modules(self) -> dict[str, object]:
         return {
             "identity": self.identity,
@@ -75,12 +79,6 @@ class ServiceManager:
             raise ConfigError(f"Unknown module: {name}")
         return module
 
-    # ---- agent sessions ----
-    async def reset_group_sessions(self, group_id: str) -> None:
-        await self.decision_agent.reset_session(f"decision:{group_id}")
-        await self.reply_agent.reset_session(f"reply:{group_id}")
-
-    # ---- lifecycle ----
     def start(self, gateways: GatewayProvider) -> None:
         self.approval.start_polling(gateways)
 
@@ -91,4 +89,20 @@ class ServiceManager:
         await self.reply_agent.close()
 
 
-__all__ = ["ServiceManager"]
+_active_manager: ServiceManager | None = None
+
+
+def set_manager(manager: ServiceManager) -> ServiceManager:
+    global _active_manager
+    _active_manager = manager
+    return manager
+
+
+def get_manager() -> ServiceManager:
+    global _active_manager
+    if _active_manager is None:
+        _active_manager = ServiceManager()
+    return _active_manager
+
+
+__all__ = ["ServiceManager", "get_manager", "set_manager"]

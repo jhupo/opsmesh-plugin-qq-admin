@@ -1,17 +1,20 @@
-"""Shared authorization and ReplyAgent formatting helpers for command modules."""
+"""Shared admin check and ReplyAgent helpers for command handlers."""
 
 from typing import Any
 
 from opsmesh.matcher import Matcher
 from qq import Gateway, GroupMessageEvent
 
-from qq_admin.manager import ServiceManager
+from qq_admin.manager import ServiceManager, get_manager
 from qq_admin.models import ReplySpec
-from qq_admin.modules import ActionOutcome, MinimumRole
+from qq_admin.modules import ActionOutcome
 
 
-def event_text(event: GroupMessageEvent) -> str:
-    return event.get_plaintext().strip() or (event.content or "").strip()
+def command_args(event: GroupMessageEvent, prefix_words: int = 1) -> list[str]:
+    """Extract whitespace-split arguments after the command prefix words."""
+    text = event.get_plaintext().strip() or (event.content or "").strip()
+    parts = text.split()
+    return parts[prefix_words:] if len(parts) > prefix_words else []
 
 
 async def compose_reply(
@@ -47,53 +50,45 @@ async def compose_reply(
     )
 
 
-async def check_access(
+async def require_admin(
     gateway: Gateway,
     event: GroupMessageEvent,
-    manager: ServiceManager,
-    *,
-    minimum_role: MinimumRole,
+    matcher: Matcher,
     command_name: str,
-) -> tuple[bool, str | None]:
-    """Check command authorization; returns (allowed, optional_deny_reply)."""
+) -> ServiceManager:
+    """Verify the sender is a group/global admin; finish silently or with denial."""
+    manager = get_manager()
     group_id = event.group_openid
-    operator_id = event.get_user_id()
-    allowed, trace = await manager.identity.authorize(
-        gateway,
-        group_id,
-        operator_id,
-        minimum_role=minimum_role,
-        command=command_name,
-    )
-    if allowed:
-        return True, None
-    if manager.identity.config(group_id).deny_response != "reply":
-        return False, None
-    reply = await compose_reply(
-        gateway,
-        event,
-        manager,
-        scenario="permission_denied",
-        fallback=manager.catalog.format_fallback("denied"),
-        facts={"command": command_name, "reason": trace.reason},
-    )
-    return False, reply
+    if await manager.identity.is_admin(gateway, group_id, event.get_user_id()):
+        return manager
+    if manager.identity.config(group_id).deny_response == "reply":
+        reply = await compose_reply(
+            gateway,
+            event,
+            manager,
+            scenario="permission_denied",
+            fallback=manager.catalog.format_fallback("denied"),
+            facts={"command": command_name},
+        )
+        await matcher.finish(reply)
+    await matcher.finish()
 
 
-async def render_outcome(
+async def finish_outcome(
     gateway: Gateway,
     event: GroupMessageEvent,
+    matcher: Matcher,
     manager: ServiceManager,
     outcome: ActionOutcome,
     *,
     target_id: str = "",
-) -> str:
+) -> None:
     scenario = (
         "guard_blocked"
         if outcome.blocked_by
         else ("command_executed" if outcome.succeeded else "command_failed")
     )
-    return await compose_reply(
+    reply = await compose_reply(
         gateway,
         event,
         manager,
@@ -108,18 +103,7 @@ async def render_outcome(
             "detail": outcome.message,
         },
     )
+    await matcher.finish(reply)
 
 
-async def finish_reply(matcher: Matcher, reply: str | None) -> None:
-    if reply:
-        await matcher.finish(reply)
-    await matcher.finish()
-
-
-__all__ = [
-    "check_access",
-    "compose_reply",
-    "event_text",
-    "finish_reply",
-    "render_outcome",
-]
+__all__ = ["command_args", "compose_reply", "finish_outcome", "require_admin"]
