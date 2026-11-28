@@ -73,12 +73,9 @@ class DecisionAgent:
         return self._client is not None
 
     def _model_settings(self) -> ModelSettings:
-        reasoning = (
-            Reasoning(effort=self.config.reasoning_effort)
-            if self.config.reasoning_effort
-            else None
+        return ModelSettings(
+            temperature=0.0, reasoning=Reasoning(effort=self.config.reasoning_effort)
         )
-        return ModelSettings(temperature=0.0, reasoning=reasoning)
 
     async def execute(self, prompt: str, *, context: TurnContext) -> DecisionOutcome:
         """Execute one stateless moderation decision turn via Responses API."""
@@ -122,7 +119,7 @@ class DecisionAgent:
                 agent,
                 input=prompt,
                 context=context,
-                max_turns=6,
+                max_turns=self.config.max_turns,
             )
         except InputGuardrailTripwireTriggered:
             return DecisionOutcome(

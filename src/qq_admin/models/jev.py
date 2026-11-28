@@ -34,12 +34,12 @@ class Jev:
 
     @property
     def is_ready(self) -> bool:
-        return self._client is not None or bool(self.config.effective_jev_key)
+        return self._client is not None or bool(self.config.jev_api_key.strip())
 
     def _get_client(self) -> AsyncTypeSafeClient:
         if self._client is None:
             self._client = AsyncTypeSafeClient(
-                api_key=self.config.effective_jev_key,
+                api_key=self.config.jev_api_key.strip(),
                 model=self.config.jev_model,
                 timeout=self.config.timeout_seconds,
                 headers=_IMAGE_HEADERS,

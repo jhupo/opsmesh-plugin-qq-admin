@@ -22,6 +22,7 @@ def test_minimal_default_config_and_clean_exports() -> None:
     assert cfg.jev_model == "jev-1"
     assert cfg.model == "gpt-5-mini"
     assert cfg.reasoning_effort == "low"
+    assert cfg.max_turns == 6
     assert cfg.timeout_seconds == 30.0
 
     assert qq_admin.__plugin_meta__.type == "application"

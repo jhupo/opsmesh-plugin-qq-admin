@@ -1,4 +1,4 @@
-"""ServiceManager: typed holder of shared OpenAI/Jev clients and feature modules."""
+"""ServiceManager: global holder of shared OpenAI/Jev clients and feature modules."""
 
 from typing import Any
 
@@ -22,7 +22,7 @@ from qq_admin.store import ConfigStore
 
 
 def _build_openai_client(cfg: Config) -> AsyncOpenAI | None:
-    api_key = cfg.effective_openai_key
+    api_key = cfg.openai_api_key.strip()
     if not api_key:
         return None
     kwargs: dict[str, Any] = {"api_key": api_key, "timeout": cfg.timeout_seconds}
@@ -42,21 +42,37 @@ class ServiceManager:
         jev_client: AsyncTypeSafeClient | None = None,
         openai_client: AsyncOpenAI | None = None,
     ) -> None:
-        cfg = config or Config()
-        self.config = cfg
-        self.store = store or (
-            ConfigStore.from_toml(cfg.config_path)
-            if cfg.config_path.strip()
-            else ConfigStore()
+        self.catalog = PromptCatalog.load()
+        self._owns_openai = False
+        self._openai_client: AsyncOpenAI | None = None
+        self.setup(
+            config or Config(),
+            store=store,
+            jev_client=jev_client,
+            openai_client=openai_client,
         )
-        self.catalog = PromptCatalog.load(cfg.prompts_path or None)
 
+    def setup(
+        self,
+        config: Config,
+        *,
+        store: ConfigStore | None = None,
+        jev_client: AsyncTypeSafeClient | None = None,
+        openai_client: AsyncOpenAI | None = None,
+    ) -> "ServiceManager":
+        """Apply plugin Config and reinitialize clients and modules in place."""
+        if config.config_path.strip() and store is None:
+            store = ConfigStore.from_toml(config.config_path)
+            config = Config.model_validate({**config.model_dump(), **store.raw_data()})
+
+        self.config = config
+        self.store = store or ConfigStore()
         self._owns_openai = openai_client is None
-        self._openai_client = openai_client or _build_openai_client(cfg)
+        self._openai_client = openai_client or _build_openai_client(config)
 
-        self.jev = Jev(cfg, client=jev_client)
-        self.decision_agent = DecisionAgent(cfg, client=self._openai_client)
-        self.reply_agent = ReplyAgent(cfg, client=self._openai_client)
+        self.jev = Jev(config, client=jev_client)
+        self.decision_agent = DecisionAgent(config, client=self._openai_client)
+        self.reply_agent = ReplyAgent(config, client=self._openai_client)
 
         self.identity = IdentityModule(self.store)
         self.audit = AuditModule(self.store)
@@ -65,6 +81,7 @@ class ServiceManager:
         self.safeguard = SafeguardModule(self.store, self.identity, self.escalation)
         self.moderation = ModerationModule(self.store, self)
         self.approval = ApprovalModule(self.store, self)
+        return self
 
     def is_group_enabled(self, group_id: str) -> bool:
         return self.store.is_group_enabled(group_id)
@@ -100,20 +117,6 @@ class ServiceManager:
             self._openai_client = None
 
 
-_active_manager: ServiceManager | None = None
+manager = ServiceManager()
 
-
-def set_manager(manager: ServiceManager) -> ServiceManager:
-    global _active_manager
-    _active_manager = manager
-    return manager
-
-
-def get_manager() -> ServiceManager:
-    global _active_manager
-    if _active_manager is None:
-        _active_manager = ServiceManager()
-    return _active_manager
-
-
-__all__ = ["ServiceManager", "get_manager", "set_manager"]
+__all__ = ["ServiceManager", "manager"]

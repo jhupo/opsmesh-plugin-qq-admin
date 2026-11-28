@@ -13,7 +13,7 @@ from qq import (
     VerifyInfo,
 )
 
-from qq_admin.manager import ServiceManager, get_manager
+from qq_admin.manager import ServiceManager, manager
 from qq_admin.models import ReplySpec
 from qq_admin.modules import AuditRecord
 
@@ -102,7 +102,7 @@ async def process_group_event(
 
 @group_notice.handle()
 async def handle_group_event(gateway: Gateway, event: GroupNoticeEvent) -> None:
-    reply = await process_group_event(gateway, event, get_manager())
+    reply = await process_group_event(gateway, event, manager)
     if reply:
         await gateway.send(event, reply)
 

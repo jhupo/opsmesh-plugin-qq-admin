@@ -5,7 +5,7 @@ from typing import Any
 from opsmesh.matcher import Matcher
 from qq import Gateway, GroupMessageEvent
 
-from qq_admin.manager import ServiceManager, get_manager
+from qq_admin.manager import ServiceManager, manager
 from qq_admin.models import ReplySpec
 from qq_admin.modules import ActionOutcome
 
@@ -57,7 +57,6 @@ async def require_admin(
     command_name: str,
 ) -> ServiceManager:
     """Verify the sender is a group/global admin; finish silently or with denial."""
-    manager = get_manager()
     group_id = event.group_openid
     if await manager.identity.is_admin(gateway, group_id, event.get_user_id()):
         return manager

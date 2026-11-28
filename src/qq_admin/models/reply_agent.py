@@ -55,12 +55,9 @@ class ReplyAgent:
         return self._client is not None
 
     def _model_settings(self) -> ModelSettings:
-        reasoning = (
-            Reasoning(effort=self.config.reasoning_effort)
-            if self.config.reasoning_effort
-            else None
+        return ModelSettings(
+            temperature=0.7, reasoning=Reasoning(effort=self.config.reasoning_effort)
         )
-        return ModelSettings(temperature=0.7, reasoning=reasoning)
 
     async def execute(self, spec: ReplySpec) -> str:
         """Generate one natural group admin reply via Responses API."""
@@ -105,7 +102,7 @@ class ReplyAgent:
                 agent,
                 input=json.dumps(payload, ensure_ascii=False),
                 context=spec,
-                max_turns=2,
+                max_turns=self.config.max_turns,
             )
             text = str(result.final_output or "").strip()
             return text or spec.fallback

@@ -5,7 +5,7 @@ from opsmesh.log import logger
 from opsmesh.matcher import Matcher
 from qq import Gateway, GroupMessageEvent
 
-from qq_admin.manager import ServiceManager, get_manager
+from qq_admin.manager import ServiceManager, manager
 
 group_msg = on_message(priority=5, block=False)
 
@@ -73,7 +73,6 @@ async def process_group_message(
 async def handle_group_message(
     gateway: Gateway, event: GroupMessageEvent, matcher: Matcher
 ) -> None:
-    manager = get_manager()
     handled, reply = await process_group_message(gateway, event, manager)
     if reply:
         await gateway.send(event, reply)

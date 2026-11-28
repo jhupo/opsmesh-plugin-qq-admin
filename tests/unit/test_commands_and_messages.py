@@ -21,9 +21,8 @@ from qq import (
 )
 from qq.event import GroupAuthor
 
-from qq_admin import ServiceManager
+from qq_admin import Config, ServiceManager, manager
 from qq_admin.commands import actions, admin, queries
-from qq_admin.manager import set_manager
 from qq_admin.messages import process_group_event, process_group_message
 
 
@@ -85,7 +84,7 @@ def _gateway(*, bot_role: str = "admin", roles: dict[str, str] | None = None):
 
 @pytest.mark.anyio
 async def test_direct_on_command_handlers() -> None:
-    manager = set_manager(ServiceManager())
+    manager.setup(Config())
     manager.identity.update_config("G1", "admins", "ADMIN_1")
     gw = _gateway()
 

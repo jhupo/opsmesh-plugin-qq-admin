@@ -2,17 +2,12 @@
 
 from importlib.metadata import PackageNotFoundError, version
 
-from openai import AsyncOpenAI as _AsyncOpenAI
 from opsmesh import get_driver, get_gateways
 from opsmesh.plugin import PluginMetadata, get_plugin_config
 from qq import Gateway as _QQGateway
-from typesafe_sdk import AsyncTypeSafeClient as _AsyncTypeSafeClient
 
 from .config import Config as _Config
-from .manager import ServiceManager as _ServiceManager
-from .manager import get_manager as _get_manager
-from .manager import set_manager as _set_manager
-from .store import ConfigStore as _ConfigStore
+from .manager import manager as _manager
 
 try:
     __version__: str | None = version("opsmesh-plugin-qq-admin")
@@ -41,58 +36,22 @@ def _qq_gateways() -> list[_QQGateway]:
     return [gw for gw in get_gateways().values() if isinstance(gw, _QQGateway)]
 
 
-def configure(
-    config: _Config | None = None,
-    *,
-    store: _ConfigStore | None = None,
-    jev_client: _AsyncTypeSafeClient | None = None,
-    openai_client: _AsyncOpenAI | None = None,
-) -> _ServiceManager:
-    """Initialize or replace the active ServiceManager with injectable SDK clients."""
-    cfg = config
-    if cfg is None:
-        try:
-            cfg = get_plugin_config(_Config)
-        except ValueError:
-            cfg = _Config()
-
-    if cfg.config_path.strip() and store is None:
-        store = _ConfigStore.from_toml(cfg.config_path)
-        raw = store.raw_data()
-        cfg = _Config.model_validate({**cfg.model_dump(), **raw})
-
-    return _set_manager(
-        _ServiceManager(
-            cfg,
-            store=store,
-            jev_client=jev_client,
-            openai_client=openai_client,
-        )
-    )
-
-
-def get_manager() -> _ServiceManager:
-    """Return the active ServiceManager, creating a default instance if needed."""
-    return _get_manager()
-
-
-# Auto-register direct on_command / on_message / on_notice handlers under OpsMesh.
 try:
     _driver = get_driver()
 except ValueError:
     pass
 else:
-    _active = configure()
+    _manager.setup(get_plugin_config(_Config))
     from . import commands as _commands  # noqa: F401
     from . import messages as _messages  # noqa: F401
 
     @_driver.on_startup
     async def _on_startup() -> None:
-        _active.start(_qq_gateways)
+        _manager.start(_qq_gateways)
 
     @_driver.on_shutdown
     async def _on_shutdown() -> None:
-        await _active.shutdown()
+        await _manager.shutdown()
 
 
 from .config import Config as Config
@@ -103,6 +62,7 @@ from .exception import PermissionDeniedError as PermissionDeniedError
 from .exception import QQAdminError as QQAdminError
 from .exception import SafeguardBlockedError as SafeguardBlockedError
 from .manager import ServiceManager as ServiceManager
+from .manager import manager as manager
 from .models import GROUP_ADMIN_TOOLS as GROUP_ADMIN_TOOLS
 from .models import AsyncTypeSafeClient as AsyncTypeSafeClient
 from .models import DecisionAgent as DecisionAgent
