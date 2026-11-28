@@ -2,10 +2,8 @@
 
 ## 安全设计基线
 
-- **双重权限校验**：每次群管写操作同时校验**操作者身份**（`SUPERUSER | GROUP_OWNER | GROUP_ADMIN`）与**机器人本群身份**（`member_role in {"admin", "owner"}`），防止越权指令或 LLM 提示词注入触发未授权高危动作。
-- **高危动作硬性护栏**：内置受保护成员列表（`protected_openids`）、角色层级压制保护（禁止操作群主及同级管理员）、单群每日踢人/禁言/拉黑配额上限、目标级冷却窗口与禁言时长上下界截断。
-- **踢人与拉黑前置核验**：执行 `batch_remove_group_members` 前强制校验成员在群状态与角色等级，默认不勾选永久拉黑，防止误伤不可逆。
-- **全链路审计留痕**：无论来源于手动斜杠命令、LLM 工具调用还是自动入群审批，每次判定结果（允许/拦截/失败）均写入结构化审计日志。
+- **路径安全继承**：所有 `group_openid` / `member_openid` / `message_id` 参数均经底层 `opsmesh-adapter-qq` 的 `validate_qq_identifier()` 严格校验，阻断路径注入。
+- **权限层级辅助**：提供 `ensure_bot_admin()` 与 `ensure_can_manage(operator_role, target_role)`，便于调用方在执行踢人、禁言、拉黑前核验群内角色层级。
 
 ## 漏洞上报
 

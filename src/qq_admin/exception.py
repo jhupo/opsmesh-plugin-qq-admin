@@ -1,48 +1,21 @@
-"""Domain exception hierarchy for qq_admin permissions and safeguards."""
+"""Domain exceptions for QQ Official v2 group management."""
 
 
 class QQAdminError(Exception):
-    """Base structured domain error raised by qq_admin services and public APIs."""
+    """Base exception for qq_admin errors."""
 
-    code: str = "QQ_ADMIN_ERROR"
-
-    def __init__(self, message: str, *, code: str | None = None) -> None:
+    def __init__(self, message: str) -> None:
         super().__init__(message)
         self.message: str = message
-        if code is not None:
-            self.code = code
 
 
-class GroupAdminDisabledError(QQAdminError):
-    code = "GROUP_ADMIN_DISABLED"
+class BotNotAdminError(QQAdminError):
+    """Raised when the bot lacks admin/owner role in the target group."""
 
 
-class PermissionDeniedError(QQAdminError):
-    code = "PERMISSION_DENIED"
+class HierarchyError(QQAdminError):
+    """Raised when operator role cannot manage the target member role."""
 
 
-class BotRoleInsufficientError(QQAdminError):
-    code = "BOT_ROLE_INSUFFICIENT"
-
-
-class TargetProtectedError(QQAdminError):
-    code = "TARGET_PROTECTED"
-
-
-class QuotaExceededError(QQAdminError):
-    code = "QUOTA_EXCEEDED"
-
-
-class CooldownActiveError(QQAdminError):
-    code = "COOLDOWN_ACTIVE"
-
-
-__all__ = [
-    "BotRoleInsufficientError",
-    "CooldownActiveError",
-    "GroupAdminDisabledError",
-    "PermissionDeniedError",
-    "QQAdminError",
-    "QuotaExceededError",
-    "TargetProtectedError",
-]
+class GroupTargetRequiredError(QQAdminError):
+    """Raised when an event is not associated with any QQ group_openid."""

@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "opsmesh-plugin-qq-admin"
 version = "0.1.0"
-description = "Official QQ Bot v2 group administration plugin and standalone async function APIs for OpsMesh"
+description = "Official QQ Bot v2 group administration client classes (QQGroupAdmin & QQGroupScope) for OpsMesh"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]

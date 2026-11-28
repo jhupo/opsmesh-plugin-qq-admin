@@ -5,5 +5,7 @@
 ## [Unreleased]
 
 ### Added
-- 初始化 `opsmesh-plugin-qq-admin` 项目骨架（顶层包名 `qq_admin`）与跨平台 CI / CodeQL / 安全扫描流水线。
-- 完成基于腾讯官方 QQ 机器人 v2 全量群管 API 的四层插件架构设计：有状态安全护栏、滑动窗口警告阶梯升级、入群申请自动审批与独立类模块化的 LLM 群管工具体系（零 `build_*` 闭包工厂）。
+- 实现面向官方 QQ 机器人 v2 全量群管理 API 的无状态高内聚接口类 `QQGroupAdmin` 与单群绑定视图 `QQGroupScope`。
+- 支持秒数、简写字符串（`"30s"`/`"10m"`/`"2h"`/`"1d"`）、`timedelta` 与 `datetime` 禁言时长归一化。
+- 支持群成员、群黑名单与入群申请列表的 `next_cursor` 自动游标翻页迭代（`iter_*` / `get_all_*`）。
+- 提供 OpsMesh 原生依赖注入注解 `GroupAdmin` 与 `CurrentGroup`。
