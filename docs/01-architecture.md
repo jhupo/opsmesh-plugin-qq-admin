@@ -1,71 +1,31 @@
-# 01. 架构设计与官方 QQ 群管 v2 能力边界
+# 01. 架构设计：可注入 Jev + 双 OpenAI Agents SDK 群管体系
 
-本文档定义 `opsmesh-plugin-qq-admin` 与 `opsmesh-adapter-qq` 的分工边界及类关系设计。
+`opsmesh-plugin-qq-admin` 是纯群管控制应用插件（`type="application"`），**不依赖正则规则快筛，绝不参与日常闲聊**。
 
----
-
-## 1. 双仓分层职责边界
+## 1. 全链路数据流（System 1 Jev -> Agent 1 裁决执行 -> Agent 2 角色化回复）
 
 ```mermaid
-flowchart LR
-    BIZ["业务插件 / AI Agent (@function_tool)"] --> CLS["qq_admin (QQGroupAdmin / QQGroupScope / CurrentGroup)"]
-    CLS --> GW["qq.Gateway (opsmesh-adapter-qq: 1:1 原始协议接口)"]
-    GW --> TX["腾讯 QQ 开放平台 OpenAPI v2"]
+flowchart TD
+    IN["群消息入站 (on_message, block=False)"] --> ID["节流刷新 Bot 角色 + 发言者身份"]
+    ID --> JEV["System 1: JevClient.system_one()<br/>文本+图片违规分类 / 友善调侃识别 / 严重度(0~4) / 提示词注入检测"]
+    JEV --> GATE{"Jev 校准分级"}
+    GATE -- "无违规 / 友善玩梗 / 注入拦截" --> PASS["静默返回 False（透传给下游聊天插件）"]
+    GATE -- "warn / auto_enforce / severe" --> DEC["Agent 1: DecisionAgent (temperature=0.0)<br/>调用 9 个官方 QQ v2 @function_tool + 三层 Guardrails<br/>输出结构化 ExecutionReport"]
+    DEC --> REP["Agent 2: ReplyAgent (temperature=0.7)<br/>输入：当前群状态 + 角色人设提示词 + ExecutionReport<br/>自由生成自然、不重复的群管回复 + @output_guardrail 守门"]
+    REP --> SEND["发送回复到 QQ 群并按需 stop_propagation()"]
 ```
 
-| 仓库 | 定位 | 负责内容 |
-| :--- | :--- | :--- |
-| **`opsmesh-adapter-qq`** | 底层协议层 | 连接保活、鉴权 Token、OpenID 校验、1:1 官方 HTTP 接口映射 |
-| **`opsmesh-plugin-qq-admin`** | 群管理接口类层 | 无状态 `QQGroupAdmin` 与单群视图 `QQGroupScope`、单人/批量语义封装、时长字符串归一化、自动 `next_cursor` 游标翻页、角色层级校验与 OpsMesh `Depends` 注入 |
+## 2. 为什么拆分为双 Agent
 
----
+- **Agent 1 (`agents/decision_agent.py`)**：只关心“要不要管、管谁、调哪些工具”。低温度（`0.0`）保证工具调用精准稳定，受 `@input_guardrail`（Jev 注入检测）和 `@tool_input_guardrail`（8 步硬护栏 + Jev 动作证据二审）约束，只输出结构化 `ExecutionReport`，不操心文案风格。
+- **Agent 2 (`agents/reply_agent.py`)**：不挂载任何写工具，只接收**当前实时状态**（群 ID、Bot 角色、今日禁言/踢人计数与上限、操作者与目标身份）、**角色人设提示词**（`resources/prompts.toml` `[reply_agent]` 或 `QQ_ADMIN__LLM__REPLY_PERSONA`）和**真实执行结果**（违规处置、权限拒绝、护栏拦截、命令反馈）。较高温度（默认 `0.7`）让每次群管回复自然贴合当下语境、避免死板复读，同时受 `@output_guardrail`（防假执行 + Jev 输出安全复核）兜底。
 
-## 2. 核心类关系图
+## 3. 可注入的 `JevClient`（`qq_admin/jev/`）
 
-```mermaid
-classDiagram
-    class QQGroupAdmin {
-        +Gateway gateway
-        +group(group_openid) QQGroupScope
-        +from_event(gateway, event)$ QQGroupScope
-        +get_info(group_openid)
-        +get_bot_state(group_openid)
-        +is_bot_admin(group_openid)
-        +ensure_bot_admin(group_openid)
-        +get_member(group_openid, member_openid)
-        +list_members(group_openid, cursor, limit)
-        +list_members_by_index(group_openid, start_index, limit)
-        +iter_members(group_openid, limit)
-        +get_all_members(group_openid, limit)
-        +get_mute_setting(group_openid)
-        +get_global_mute_rule(group_openid)
-        +list_muted_members(group_openid)
-        +mute(group_openid, member_openid, duration, op)
-        +mute_many(group_openid, member_openids, duration, op)
-        +unmute(group_openid, member_openid)
-        +unmute_many(group_openid, member_openids)
-        +kick(group_openid, member_openid, add_to_blacklist)
-        +kick_many(group_openid, member_openids, add_to_blacklist)
-        +list_blacklist(group_openid, cursor, limit)
-        +iter_blacklist(group_openid, limit)
-        +get_all_blacklist(group_openid, limit)
-        +ban(group_openid, member_openid)
-        +ban_many(group_openid, member_openids)
-        +unban(group_openid, member_openid)
-        +unban_many(group_openid, member_openids)
-        +list_join_requests(group_openid, cursor, limit)
-        +iter_join_requests(group_openid, limit)
-        +get_all_join_requests(group_openid, limit)
-        +approve_join(group_openid, member_openid, join_request_id)
-        +reject_join(group_openid, member_openid, join_request_id, reason, add_to_blacklist)
-        +recall(group_openid, message_id)
-    }
+- `JevClient(config, sdk_client=...)` 统一管理 `AsyncTypeSafeClient` 与可选代理 `httpx.AsyncClient` 的启停；
+- 所有评估函数（`evaluate_message`、`evaluate_join_request`、`check_input_injection`、`check_action_validity`、`check_output_safety`）与所有 Guardrail 均**通过参数显式接收 `JevClient`**，不在函数内部写死全局客户端，既方便多实例/宿主共享客户端，也让单元测试 100% 确定性可控。
 
-    class QQGroupScope {
-        +QQGroupAdmin admin
-        +str group_openid
-        +同名全部单群方法(免传 group_openid)
-    }
+## 4. 角色感知 8 步硬护栏（`moderation/guard.py`）
 
-    QQGroupAdmin "1" --> "*" QQGroupScope : group(group_openid)
-```
+- **Bot 为群主（`owner`）**：跳过插件侧保护名单、冷却、每日限额与阶梯限制，以 QQ 官方接口实际校验为准；
+- **Bot 为管理员（`admin`）**：强制校验 `protected_users` -> `exempt_users` -> `admin.admins` -> `auto_exempt_admins` -> `mute_cooldown` -> `daily_mute/kick_limit` -> `kick_require_member_check` -> `escalation.steps`。

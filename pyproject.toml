@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "opsmesh-plugin-qq-admin"
-version = "0.1.0"
-description = "Official QQ Bot v2 group administration client classes (QQGroupAdmin & QQGroupScope) for OpsMesh"
+version = "0.2.0"
+description = "Automatic Official QQ Bot v2 group administration plugin for OpsMesh powered by TypeSafe AI Jev and dual OpenAI Agents SDK controllers"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
@@ -40,7 +40,7 @@ where = ["src"]
 include = ["qq_admin*"]
 
 [tool.setuptools.package-data]
-qq_admin = ["py.typed"]
+qq_admin = ["py.typed", "resources/*.toml"]
 
 [tool.setuptools.dynamic]
 dependencies = {file = ["requirements.txt"]}

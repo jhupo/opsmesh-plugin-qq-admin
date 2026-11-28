@@ -1,11 +1,14 @@
-# 变更日志（Changelog）
+# Changelog
 
-本文件遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 规范，版本号遵循 [语义化版本（Semantic Versioning）](https://semver.org/lang/zh-CN/)。
+## 0.2.0
 
-## [Unreleased]
+- 按领域清晰拆分为 `jev/`、`moderation/`、`agents/`、`handlers/`、`resources/` 五大子包，彻底移除扁平堆砌与脆弱的正则规则快筛（FastGate）。
+- 封装可注入的 `JevClient`（`qq_admin.jev.JevClient`），所有评估器与 Guardrail 通过参数显式接收客户端实例，不写死全局单例。
+- 引入 **双 OpenAI Agents SDK 架构**：
+  - `DecisionAgent`（`agents/decision_agent.py`）：`temperature=0.0`，负责调用 9 个官方 QQ v2 `@function_tool` 并输出结构化 `ExecutionReport`；
+  - `ReplyAgent`（`agents/reply_agent.py`）：接收实时状态快照、角色人设提示词与执行事实，自由生成自然、不重复的群管回复（违规处理、权限拒绝、护栏拦截、命令反馈）。
+- 全部中文提示词、Jev 评判标准、角色人设与兜底模板外置至 `src/qq_admin/resources/prompts.toml`，全部 `.py` 源码严格保持 0 中文字符。
 
-### Added
-- 实现面向官方 QQ 机器人 v2 全量群管理 API 的无状态高内聚接口类 `QQGroupAdmin` 与单群绑定视图 `QQGroupScope`。
-- 支持秒数、简写字符串（`"30s"`/`"10m"`/`"2h"`/`"1d"`）、`timedelta` 与 `datetime` 禁言时长归一化。
-- 支持群成员、群黑名单与入群申请列表的 `next_cursor` 自动游标翻页迭代（`iter_*` / `get_all_*`）。
-- 提供 OpsMesh 原生依赖注入注解 `GroupAdmin` 与 `CurrentGroup`。
+## 0.1.0
+
+- 初始版本与官方 QQ Bot v2 协议对齐。
