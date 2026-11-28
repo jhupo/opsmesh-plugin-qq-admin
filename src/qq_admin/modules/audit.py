@@ -6,7 +6,7 @@ import time
 
 from pydantic import BaseModel, Field
 
-from qq_admin.store import ConfigStore, parse_field_value
+from qq_admin.store import CONFIG_STORE, ConfigStore, parse_field_value
 
 
 class AuditConfig(BaseModel):
@@ -93,5 +93,10 @@ class AuditModule:
     def forget_group(self, group_id: str) -> None:
         self._logs.pop(group_id, None)
 
+    def clear(self) -> None:
+        self._logs.clear()
 
-__all__ = ["AuditConfig", "AuditModule", "AuditRecord"]
+
+AUDIT = AuditModule(CONFIG_STORE)
+
+__all__ = ["AUDIT", "AuditConfig", "AuditModule", "AuditRecord"]

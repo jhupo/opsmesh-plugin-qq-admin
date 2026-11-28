@@ -85,4 +85,6 @@ class PromptCatalog:
         return template.format(**values) if values else template
 
 
-__all__ = ["PROMPTS_DIR", "PromptCatalog"]
+CATALOG = PromptCatalog()
+
+__all__ = ["CATALOG", "PROMPTS_DIR", "PromptCatalog"]

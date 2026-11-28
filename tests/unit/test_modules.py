@@ -1,4 +1,4 @@
-"""Tests for feature modules (identity, safeguard, moderation, approval)."""
+"""Tests for direct module singletons (IDENTITY, SAFEGUARD, MODERATION, APPROVAL)."""
 
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -11,7 +11,18 @@ from qq import (
     MemberBlacklistOpReturn,
 )
 
-from qq_admin import ServiceManager, format_duration, parse_duration
+from qq_admin import (
+    APPROVAL,
+    AUDIT,
+    IDENTITY,
+    MANAGER,
+    MODERATION,
+    SAFEGUARD,
+    Config,
+    SafetyReport,
+    format_duration,
+    parse_duration,
+)
 
 
 def _fake_gateway(*, bot_role: str = "admin", roles: dict[str, str] | None = None):
@@ -45,53 +56,43 @@ def test_parse_and_format_duration() -> None:
 
 @pytest.mark.anyio
 async def test_safeguard_8_steps_and_owner_bypass() -> None:
-    manager = ServiceManager()
-    manager.identity.update_config("G1", "admins", "GLOBAL_ADMIN")
-    manager.safeguard.update_config("G1", "protected_users", "VIP_1")
-    manager.safeguard.add_exempt("G1", "EXEMPT_1")
+    IDENTITY.update_config("G1", "admins", "GLOBAL_ADMIN")
+    SAFEGUARD.update_config("G1", "protected_users", "VIP_1")
+    SAFEGUARD.add_exempt("G1", "EXEMPT_1")
 
     gw = _fake_gateway(bot_role="admin", roles={"MOD_1": "admin", "USER_1": "member"})
 
-    # 1. protected_users
-    v1 = await manager.safeguard.check_action(
-        gw, "G1", "VIP_1", "mute", mute_seconds=600
-    )
+    v1 = await SAFEGUARD.check_action(gw, "G1", "VIP_1", "mute", mute_seconds=600)
     assert not v1.allowed
     assert v1.blocked_by == "protected_users"
-    # 2. exempt_users
-    v2 = await manager.safeguard.check_action(
-        gw, "G1", "EXEMPT_1", "mute", mute_seconds=600
-    )
+
+    v2 = await SAFEGUARD.check_action(gw, "G1", "EXEMPT_1", "mute", mute_seconds=600)
     assert not v2.allowed
     assert v2.blocked_by == "exempt_users"
-    # 3. global admins & group admins (unified auto_exempt_admins via is_admin)
-    v3 = await manager.safeguard.check_action(
+
+    v3 = await SAFEGUARD.check_action(
         gw, "G1", "GLOBAL_ADMIN", "mute", mute_seconds=600
     )
     assert not v3.allowed
     assert v3.blocked_by == "auto_exempt_admins"
-    # 4. group admin
-    v4 = await manager.safeguard.check_action(
-        gw, "G1", "MOD_1", "mute", mute_seconds=600
-    )
+
+    v4 = await SAFEGUARD.check_action(gw, "G1", "MOD_1", "mute", mute_seconds=600)
     assert not v4.allowed
     assert v4.blocked_by == "auto_exempt_admins"
-    # 5. kick_require_confirm
-    v5 = await manager.safeguard.check_action(
-        gw, "G1", "USER_1", "kick", require_confirm=True
-    )
+
+    v5 = await SAFEGUARD.check_action(gw, "G1", "USER_1", "kick", require_confirm=True)
     assert not v5.allowed
     assert v5.blocked_by == "kick_require_confirm"
-    manager.safeguard.mark_member_verified("G1", "USER_1")
-    v5_ok = await manager.safeguard.check_action(
+
+    SAFEGUARD.mark_member_verified("G1", "USER_1")
+    v5_ok = await SAFEGUARD.check_action(
         gw, "G1", "USER_1", "kick", require_confirm=True
     )
     assert v5_ok.allowed
 
-    # Owner bot bypasses safeguard limits
-    manager.identity.forget_group("G1")
+    IDENTITY.forget_group("G1")
     owner_gw = _fake_gateway(bot_role="owner")
-    v_owner = await manager.safeguard.check_action(
+    v_owner = await SAFEGUARD.check_action(
         owner_gw, "G1", "VIP_1", "mute", mute_seconds=7200
     )
     assert v_owner.allowed
@@ -99,66 +100,62 @@ async def test_safeguard_8_steps_and_owner_bypass() -> None:
 
 
 @pytest.mark.anyio
-async def test_moderation_actions_and_join_approval() -> None:
+async def test_moderation_actions_routing_and_join_approval() -> None:
     fake_jev = MagicMock()
     fake_jev.system_one = AsyncMock(
         return_value=SimpleNamespace(nouls={"answer": SimpleNamespace(noul=0.92)})
     )
-    manager = ServiceManager(jev_client=fake_jev)
+    MANAGER.setup(Config(), jev_client=fake_jev)
     gw = _fake_gateway(bot_role="admin")
 
-    w = await manager.moderation.warn(gw, "G1", "U1", category="ad", reason="promo")
+    w = await MODERATION.warn(gw, "G1", "U1", category="ad", reason="promo")
     assert w.succeeded
-    m = await manager.moderation.mute(gw, "G1", "U1", duration="10m", reason="spam")
+    m = await MODERATION.mute(gw, "G1", "U1", duration="10m", reason="spam")
     assert m.succeeded
     gw.set_group_members_mute.assert_awaited_once()
 
-    u = await manager.moderation.unmute(gw, "G1", "U1")
+    u = await MODERATION.unmute(gw, "G1", "U1")
     assert u.succeeded
-    b = await manager.moderation.ban(gw, "G1", "U2", reason="scam")
+    b = await MODERATION.ban(gw, "G1", "U2", reason="scam")
     assert b.succeeded
-    ub = await manager.moderation.unban(gw, "G1", "U2")
+    ub = await MODERATION.unban(gw, "G1", "U2")
     assert ub.succeeded
-    r = await manager.moderation.recall(gw, "G1", "MSG_1", reason="ad")
+    r = await MODERATION.recall(gw, "G1", "MSG_1", reason="ad")
     assert r.succeeded
-    assert len(manager.audit.recent_logs("G1", limit=20)) >= 6
+    assert len(AUDIT.recent_logs("G1", limit=20)) >= 6
 
-    # ApprovalModule: risk_tips and Jev auto-reject
-    manager.approval.update_config("G1", "enabled", "true")
-    manager.approval.update_config("G1", "default_action", "approve")
+    APPROVAL.update_config("G1", "enabled", "true")
+    APPROVAL.update_config("G1", "default_action", "approve")
     risky_req = JoinRequest(
         join_request_id="REQ_1", member_openid="BAD_1", risk_tips="spam account"
     )
-    res1 = await manager.approval.review(gw, "G1", risky_req)
+    res1 = await APPROVAL.review(gw, "G1", risky_req)
     assert res1 is not None
     assert res1.action == "reject"
 
     jev_risky_req = JoinRequest(join_request_id="REQ_2", member_openid="BAD_2")
-    res2 = await manager.approval.review(gw, "G1", jev_risky_req)
+    res2 = await APPROVAL.review(gw, "G1", jev_risky_req)
     assert res2 is not None
     assert res2.action == "reject"
 
-    # 3-channel routing, trusted domains, and per-category disable
-    from qq_admin import SafetyReport
-
-    route, hits = manager.moderation.classify_route(
+    route, hits = MODERATION.classify_route(
         "G1", SafetyReport(violence=0.92, severity=4)
     )
     assert route == "critical_fast"
     assert hits == ["violence"]
 
-    route_atk, _ = manager.moderation.classify_route(
+    route_atk, _ = MODERATION.classify_route(
         "G1", SafetyReport(prompt_injection=0.88, severity=2)
     )
     assert route_atk == "attack"
 
-    manager.moderation.update_config("G1", "disabled_categories", "advertising")
-    route_off, _ = manager.moderation.classify_route(
+    MODERATION.update_config("G1", "disabled_categories", "advertising")
+    route_off, _ = MODERATION.classify_route(
         "G1", SafetyReport(advertising=0.95, severity=2)
     )
     assert route_off == "allow"
 
-    filtered = manager.moderation.filter_urls(
+    filtered = MODERATION.filter_urls(
         "G1", ["https://github.com/org/repo", "https://spam.example/promo"]
     )
     assert filtered == ["https://spam.example/promo"]

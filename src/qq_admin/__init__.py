@@ -6,7 +6,7 @@ from opsmesh import get_driver
 from opsmesh.plugin import PluginMetadata, get_plugin_config
 
 from .config import Config as _Config
-from .manager import manager
+from .manager import MANAGER
 
 try:
     __version__: str | None = version("opsmesh-plugin-qq-admin")
@@ -36,13 +36,13 @@ try:
 except ValueError:
     pass
 else:
-    manager.setup(get_plugin_config(_Config))
+    MANAGER.setup(get_plugin_config(_Config))
     from . import commands as _commands  # noqa: F401
     from . import messages as _messages  # noqa: F401
 
     @_driver.on_shutdown
     async def _on_shutdown() -> None:
-        await manager.shutdown()
+        await MANAGER.shutdown()
 
 
 from .config import Config as Config
@@ -52,8 +52,8 @@ from .exception import ConfigError as ConfigError
 from .exception import PermissionDeniedError as PermissionDeniedError
 from .exception import QQAdminError as QQAdminError
 from .exception import SafeguardBlockedError as SafeguardBlockedError
+from .manager import MANAGER as MANAGER
 from .manager import ServiceManager as ServiceManager
-from .manager import manager as manager
 from .models import ATTACK_FIELDS as ATTACK_FIELDS
 from .models import CRITICAL_FIELDS as CRITICAL_FIELDS
 from .models import GROUP_ADMIN_TOOLS as GROUP_ADMIN_TOOLS
@@ -76,6 +76,14 @@ from .models import recall_message as recall_message
 from .models import unban_member as unban_member
 from .models import unmute_member as unmute_member
 from .models import warn_member as warn_member
+from .modules import APPROVAL as APPROVAL
+from .modules import AUDIT as AUDIT
+from .modules import ESCALATION as ESCALATION
+from .modules import IDENTITY as IDENTITY
+from .modules import MODERATION as MODERATION
+from .modules import MODULES as MODULES
+from .modules import SAFEGUARD as SAFEGUARD
+from .modules import WARNING as WARNING
 from .modules import ActionOutcome as ActionOutcome
 from .modules import ApprovalConfig as ApprovalConfig
 from .modules import ApprovalModule as ApprovalModule
@@ -92,12 +100,18 @@ from .modules import ModerationModule as ModerationModule
 from .modules import MuteDuration as MuteDuration
 from .modules import PermissionTrace as PermissionTrace
 from .modules import PolicyVerdict as PolicyVerdict
+from .modules import RouteKind as RouteKind
 from .modules import SafeguardConfig as SafeguardConfig
 from .modules import SafeguardModule as SafeguardModule
+from .modules import WarningCategory as WarningCategory
 from .modules import WarningConfig as WarningConfig
 from .modules import WarningModule as WarningModule
 from .modules import format_duration as format_duration
+from .modules import get_module as get_module
 from .modules import parse_duration as parse_duration
+from .modules import reset_modules as reset_modules
+from .prompts import CATALOG as CATALOG
 from .prompts import PROMPTS_DIR as PROMPTS_DIR
 from .prompts import PromptCatalog as PromptCatalog
+from .store import CONFIG_STORE as CONFIG_STORE
 from .store import ConfigStore as ConfigStore

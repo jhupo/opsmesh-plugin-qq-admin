@@ -15,6 +15,8 @@ from agents import (
     tool_input_guardrail,
 )
 
+from qq_admin.prompts import CATALOG
+
 from .jev import ATTACK_FIELDS, CRITICAL_FIELDS
 
 _REPLY_SAFETY_FIELDS = (*CRITICAL_FIELDS, "pii", "unethical_behavior")
@@ -54,17 +56,19 @@ async def injection_guardrail(
 ) -> GuardrailFunctionOutput:
     """Block prompt-injection/jailbreak, reusing precomputed SafetyReport if any."""
     del agent
+    from qq_admin.manager import MANAGER
+    from qq_admin.modules.moderation import MODERATION
+
     turn = ctx.context
-    manager = turn.manager
     if turn.mode == "admin_command":
         return _pass(skipped=True)
 
-    threshold = manager.moderation.config(turn.group_id).attack_threshold
+    threshold = MODERATION.config(turn.group_id).attack_threshold
     report = turn.report
     if report is None:
-        if not manager.jev.is_ready:
+        if not MANAGER.jev.is_ready:
             return _pass(skipped=True)
-        report = await manager.jev.execute(
+        report = await MANAGER.jev.execute(
             text=_as_text(user_input)[:2000],
             categories=ATTACK_FIELDS,
             include_severity=False,
@@ -76,13 +80,15 @@ async def injection_guardrail(
 @tool_input_guardrail
 async def action_guardrail(data: ToolInputGuardrailData) -> ToolGuardrailFunctionOutput:
     """Optional second-check verifying a punitive tool call matches the evidence."""
+    from qq_admin.manager import MANAGER
+    from qq_admin.modules.moderation import MODERATION
+
     turn = data.context.context
-    manager = turn.manager
-    cfg = manager.moderation.config(turn.group_id)
+    cfg = MODERATION.config(turn.group_id)
     if (
         turn.mode == "admin_command"
         or not cfg.enable_action_guardrail
-        or not manager.jev.is_ready
+        or not MANAGER.jev.is_ready
     ):
         return ToolGuardrailFunctionOutput.allow({"skipped": True})
 
@@ -91,7 +97,7 @@ async def action_guardrail(data: ToolInputGuardrailData) -> ToolGuardrailFunctio
     except json.JSONDecodeError:
         arguments = {"raw": data.context.tool_arguments}
 
-    validity = await manager.jev.probability(
+    validity = await MANAGER.jev.probability(
         {
             "proposal": {"tool": data.context.tool_name, "arguments": arguments},
             "evidence": {
@@ -100,7 +106,7 @@ async def action_guardrail(data: ToolInputGuardrailData) -> ToolGuardrailFunctio
                 "jev": turn.jev_summary,
             },
         },
-        manager.catalog.jev_guard("moderation_validity"),
+        CATALOG.jev_guard("moderation_validity"),
     )
     if validity < cfg.action_validity_threshold:
         return ToolGuardrailFunctionOutput.reject_content(
@@ -116,32 +122,33 @@ async def reply_guardrail(
 ) -> GuardrailFunctionOutput:
     """Block hallucinated action claims, false denials, or unsafe replies via Jev."""
     del agent
+    from qq_admin.manager import MANAGER
+    from qq_admin.modules.moderation import MODERATION
+
     spec = ctx.context
-    manager = spec.manager
-    catalog = manager.catalog
     text = str(agent_output or "").strip()
     if not text:
         return _pass(empty=True)
 
     if not spec.executed_actions and _claims_unexecuted_action(
-        text, catalog.fake_claim_patterns()
+        text, CATALOG.fake_claim_patterns()
     ):
         return _trip(reason="hallucinated_action_claim")
     if _denies_real_permission(
         text,
         bot_role=spec.bot_role,
-        deny_flags=catalog.fake_deny_flags(),
-        legit_flags=catalog.legit_reason_flags(),
+        deny_flags=CATALOG.fake_deny_flags(),
+        legit_flags=CATALOG.legit_reason_flags(),
     ):
         return _trip(reason="false_permission_denial")
 
-    if manager.jev.is_ready:
-        report = await manager.jev.execute(
+    if MANAGER.jev.is_ready:
+        report = await MANAGER.jev.execute(
             text=text[:1000],
             categories=_REPLY_SAFETY_FIELDS,
             include_severity=False,
         )
-        threshold = manager.moderation.config(spec.group_id).output_safety_threshold
+        threshold = MODERATION.config(spec.group_id).output_safety_threshold
         if report.max_risk >= threshold:
             return _trip(reason="unsafe_reply", risk=report.max_risk)
     return _pass(safe=True)

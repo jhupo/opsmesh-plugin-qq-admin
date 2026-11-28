@@ -1,23 +1,13 @@
-"""ServiceManager: global holder of shared OpenAI/Jev clients and feature modules."""
+"""ServiceManager: global MANAGER holding shared Jev & OpenAI Responses models."""
 
 from typing import Any
 
 from openai import AsyncOpenAI
 
 from qq_admin.config import Config
-from qq_admin.exception import ConfigError
 from qq_admin.models import AsyncTypeSafeClient, DecisionAgent, Jev, ReplyAgent
-from qq_admin.modules import (
-    ApprovalModule,
-    AuditModule,
-    EscalationModule,
-    IdentityModule,
-    ModerationModule,
-    SafeguardModule,
-    WarningModule,
-)
-from qq_admin.prompts import PromptCatalog
-from qq_admin.store import ConfigStore
+from qq_admin.prompts import CATALOG
+from qq_admin.store import CONFIG_STORE, ConfigStore
 
 
 def _build_openai_client(cfg: Config) -> AsyncOpenAI | None:
@@ -31,7 +21,7 @@ def _build_openai_client(cfg: Config) -> AsyncOpenAI | None:
 
 
 class ServiceManager:
-    """Holds shared Jev/OpenAI clients, both Responses agents, and feature modules."""
+    """Holds base Config, shared Jev/OpenAI clients, and both Responses agents."""
 
     def __init__(
         self,
@@ -41,7 +31,8 @@ class ServiceManager:
         jev_client: AsyncTypeSafeClient | None = None,
         openai_client: AsyncOpenAI | None = None,
     ) -> None:
-        self.catalog = PromptCatalog.load()
+        self.catalog = CATALOG
+        self.store = CONFIG_STORE
         self._owns_openai = False
         self._openai_client: AsyncOpenAI | None = None
         self.setup(
@@ -59,51 +50,32 @@ class ServiceManager:
         jev_client: AsyncTypeSafeClient | None = None,
         openai_client: AsyncOpenAI | None = None,
     ) -> "ServiceManager":
-        """Apply plugin Config and reinitialize clients and modules in place."""
-        if config.config_path.strip() and store is None:
-            store = ConfigStore.from_toml(config.config_path)
-            config = Config.model_validate({**config.model_dump(), **store.raw_data()})
+        """Apply plugin Config, sync CONFIG_STORE, and rebuild model runners."""
+        if store is not None:
+            CONFIG_STORE.reset(store.raw_data(), path=store.path)
+        elif config.config_path.strip():
+            CONFIG_STORE.reset(path=config.config_path)
+            config = Config.model_validate(
+                {**config.model_dump(), **CONFIG_STORE.raw_data()}
+            )
+        else:
+            CONFIG_STORE.reset()
 
         self.config = config
-        self.store = store or ConfigStore()
+        self.store = CONFIG_STORE
         self._owns_openai = openai_client is None
         self._openai_client = openai_client or _build_openai_client(config)
 
-        self.jev = Jev(config, self.catalog, client=jev_client)
+        self.jev = Jev(config, CATALOG, client=jev_client)
         self.decision_agent = DecisionAgent(config, client=self._openai_client)
         self.reply_agent = ReplyAgent(config, client=self._openai_client)
-
-        self.identity = IdentityModule(self.store)
-        self.audit = AuditModule(self.store)
-        self.warning = WarningModule(self.store)
-        self.escalation = EscalationModule(self.store, self.audit)
-        self.safeguard = SafeguardModule(self.store, self.identity, self.escalation)
-        self.moderation = ModerationModule(self.store, self)
-        self.approval = ApprovalModule(self.store, self)
         return self
 
     def is_group_enabled(self, group_id: str) -> bool:
-        return self.store.is_group_enabled(group_id)
+        return CONFIG_STORE.is_group_enabled(group_id)
 
     def set_group_enabled(self, group_id: str, enabled: bool) -> None:
-        self.store.set_group_enabled(group_id, enabled)
-
-    def configurable_modules(self) -> dict[str, object]:
-        return {
-            "identity": self.identity,
-            "safeguard": self.safeguard,
-            "warning": self.warning,
-            "escalation": self.escalation,
-            "moderation": self.moderation,
-            "approval": self.approval,
-            "audit": self.audit,
-        }
-
-    def module(self, name: str):
-        module = self.configurable_modules().get(name)
-        if module is None:
-            raise ConfigError(f"Unknown module: {name}")
-        return module
+        CONFIG_STORE.set_group_enabled(group_id, enabled)
 
     async def shutdown(self) -> None:
         await self.jev.close()
@@ -112,6 +84,6 @@ class ServiceManager:
             self._openai_client = None
 
 
-manager = ServiceManager()
+MANAGER = ServiceManager()
 
-__all__ = ["ServiceManager", "manager"]
+__all__ = ["MANAGER", "ServiceManager"]

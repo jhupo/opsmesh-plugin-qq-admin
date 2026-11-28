@@ -1,4 +1,4 @@
-"""Tests for Config, prompt files in prompts/, and module-owned configs."""
+"""Tests for Config, Claude-style Markdown prompts, and module-owned configs."""
 
 from pathlib import Path
 
@@ -6,19 +6,21 @@ import pytest
 
 import qq_admin
 from qq_admin import (
+    APPROVAL,
+    CATALOG,
+    MANAGER,
     PROMPTS_DIR,
+    SAFEGUARD,
     SAFETY_FIELDS,
     Config,
     ConfigError,
     ConfigStore,
-    PromptCatalog,
-    ServiceManager,
 )
 
 EXPECTED_SAFETY_CATEGORIES = set(SAFETY_FIELDS)
 
 
-def test_config_defaults_and_prompts_folder() -> None:
+def test_config_defaults_and_markdown_prompts() -> None:
     cfg = Config()
     assert cfg.jev_model == "jev-1"
     assert cfg.model == "gpt-5-mini"
@@ -32,40 +34,79 @@ def test_config_defaults_and_prompts_folder() -> None:
         assert not tool.name.startswith("tool_")
 
     assert PROMPTS_DIR.is_dir()
-    assert (PROMPTS_DIR / "reply_agent.md").is_file()
-    assert (PROMPTS_DIR / "decision_auto.md").is_file()
-    assert (PROMPTS_DIR / "decision_admin.md").is_file()
-    catalog = PromptCatalog.load()
-    assert set(catalog.jev_questions().keys()) == EXPECTED_SAFETY_CATEGORIES
-    assert catalog.jev_severity_criteria()
-    assert catalog.reply_template()
+    for fname in ("reply_agent.md", "decision_auto.md", "decision_admin.md"):
+        assert (PROMPTS_DIR / fname).is_file()
+
+    assert set(CATALOG.jev_questions().keys()) == EXPECTED_SAFETY_CATEGORIES
+    assert CATALOG.jev_severity_criteria()
+
+    # Verify all 3 Markdown prompt templates format cleanly with XML tags & examples
+    reply_rendered = CATALOG.reply_prompt(
+        group_id="G1",
+        bot_role="admin",
+        scenario="auto_moderation",
+        actor_id="U1",
+        actor_role="member",
+        target_id="U1",
+        categories="advertising",
+        mute_count=1,
+        mute_limit=10,
+        kick_count=0,
+        kick_limit=3,
+    )
+    assert "<role>" in reply_rendered
+    assert "<persona>" in reply_rendered
+    assert "<examples>" in reply_rendered
+
+    auto_rendered = CATALOG.decision_prompt(
+        "auto_moderate",
+        group_id="G1",
+        bot_role="admin",
+        role_policy="admin policy",
+        member_id="U1",
+        sender_role="member",
+        recent_ops=0,
+        jev_summary="categories=['advertising']",
+    )
+    assert "<tools>" in auto_rendered
+    assert "<examples>" in auto_rendered
+
+    admin_rendered = CATALOG.decision_prompt(
+        "admin_command",
+        group_id="G1",
+        bot_role="owner",
+        role_policy="owner policy",
+        member_id="ADMIN_1",
+        sender_role="owner",
+    )
+    assert "<tools>" in admin_rendered
+    assert "<examples>" in admin_rendered
 
 
 def test_module_owned_config_persistence_and_group_isolation(tmp_path: Path) -> None:
     toml_file = tmp_path / "config.toml"
-    store = ConfigStore.from_toml(toml_file)
-    manager = ServiceManager(store=store)
+    MANAGER.setup(Config(), store=ConfigStore.from_toml(toml_file))
 
-    assert not manager.is_group_enabled("G1")
-    manager.set_group_enabled("G1", True)
-    assert manager.is_group_enabled("G1")
-    assert not manager.is_group_enabled("G2")
+    assert not MANAGER.is_group_enabled("G1")
+    MANAGER.set_group_enabled("G1", True)
+    assert MANAGER.is_group_enabled("G1")
+    assert not MANAGER.is_group_enabled("G2")
 
-    assert manager.safeguard.config("G1").max_mute_duration == 3600
-    updated = manager.safeguard.update_config("G1", "max_mute_duration", "1800")
+    assert SAFEGUARD.config("G1").max_mute_duration == 3600
+    updated = SAFEGUARD.update_config("G1", "max_mute_duration", "1800")
     assert updated.max_mute_duration == 1800
-    assert manager.safeguard.config("G2").max_mute_duration == 3600
+    assert SAFEGUARD.config("G2").max_mute_duration == 3600
 
-    manager.approval.update_config("G1", "enabled", "true")
-    manager.approval.update_config("G1", "default_action", "approve")
+    APPROVAL.update_config("G1", "enabled", "true")
+    APPROVAL.update_config("G1", "default_action", "approve")
 
-    reloaded = ServiceManager(store=ConfigStore.from_toml(toml_file))
-    assert reloaded.is_group_enabled("G1")
-    assert reloaded.safeguard.config("G1").max_mute_duration == 1800
-    assert reloaded.approval.config("G1").enabled is True
-    assert reloaded.approval.config("G1").default_action == "approve"
+    MANAGER.setup(Config(), store=ConfigStore.from_toml(toml_file))
+    assert MANAGER.is_group_enabled("G1")
+    assert SAFEGUARD.config("G1").max_mute_duration == 1800
+    assert APPROVAL.config("G1").enabled is True
+    assert APPROVAL.config("G1").default_action == "approve"
 
     with pytest.raises(ConfigError):
-        reloaded.safeguard.update_config("G1", "nonexistent", "123")
+        SAFEGUARD.update_config("G1", "nonexistent", "123")
     with pytest.raises(ConfigError):
-        reloaded.safeguard.update_config("G1", "max_mute_duration", "not-an-int")
+        SAFEGUARD.update_config("G1", "max_mute_duration", "not-an-int")

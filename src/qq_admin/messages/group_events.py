@@ -13,9 +13,18 @@ from qq import (
     VerifyInfo,
 )
 
-from qq_admin.manager import ServiceManager, manager
+from qq_admin.manager import MANAGER
 from qq_admin.models import ReplySpec
-from qq_admin.modules import AuditRecord
+from qq_admin.modules import (
+    APPROVAL,
+    AUDIT,
+    IDENTITY,
+    MODERATION,
+    SAFEGUARD,
+    WARNING,
+    AuditRecord,
+)
+from qq_admin.prompts import CATALOG
 
 group_notice = on_notice(priority=5, block=False)
 
@@ -37,10 +46,8 @@ def _join_request_from(event: GroupJoinRequestEvent) -> JoinRequest:
     )
 
 
-def _audit_lifecycle(
-    manager: ServiceManager, group_id: str, action: str, member_id: str
-) -> None:
-    manager.audit.record(
+def _audit_lifecycle(group_id: str, action: str, member_id: str) -> None:
+    AUDIT.record(
         AuditRecord(
             group_id=group_id,
             action=action,
@@ -52,56 +59,51 @@ def _audit_lifecycle(
     )
 
 
-async def process_group_event(
-    gateway: Gateway, event: GroupNoticeEvent, manager: ServiceManager
-) -> str | None:
+async def process_group_event(gateway: Gateway, event: GroupNoticeEvent) -> str | None:
     """Route one group notice; bot join/leave always run, others require group on."""
     group_id = event.group_openid
     if not group_id:
         return None
     if isinstance(event, GroupAddRobotEvent):
-        await manager.identity.bot_role(gateway, group_id, force=True)
+        await IDENTITY.bot_role(gateway, group_id, force=True)
         return None
     if isinstance(event, GroupDelRobotEvent):
-        manager.identity.forget_group(group_id)
-        manager.audit.forget_group(group_id)
+        IDENTITY.forget_group(group_id)
+        AUDIT.forget_group(group_id)
         return None
-    if not manager.is_group_enabled(group_id):
+    if not MANAGER.is_group_enabled(group_id):
         return None
 
     if isinstance(event, GroupJoinRequestEvent) and not event.auto_approved:
-        await manager.approval.review(gateway, group_id, _join_request_from(event))
+        await APPROVAL.review(gateway, group_id, _join_request_from(event))
         return None
     if isinstance(event, GroupMemberAddEvent):
         member_id = event.member_openid
-        manager.identity.forget_member(group_id, member_id)
-        _audit_lifecycle(manager, group_id, "member_join", member_id)
-        if not manager.moderation.config(group_id).welcome_new_members:
+        IDENTITY.forget_member(group_id, member_id)
+        _audit_lifecycle(group_id, "member_join", member_id)
+        if not MODERATION.config(group_id).welcome_new_members:
             return None
-        return await manager.reply_agent.execute(
+        return await MANAGER.reply_agent.execute(
             ReplySpec(
-                manager=manager,
                 group_id=group_id,
-                bot_role=await manager.identity.bot_role(gateway, group_id),
+                bot_role=await IDENTITY.bot_role(gateway, group_id),
                 scenario="member_welcome",
                 target_id=member_id,
-                fallback=manager.catalog.format_fallback(
-                    "member_welcome", member_id=member_id
-                ),
+                fallback=CATALOG.format_fallback("member_welcome", member_id=member_id),
             )
         )
     if isinstance(event, GroupMemberRemoveEvent):
         member_id = event.member_openid
-        manager.identity.forget_member(group_id, member_id)
-        manager.warning.clear_member(group_id, member_id)
-        manager.safeguard.clear_member(group_id, member_id)
-        _audit_lifecycle(manager, group_id, "member_leave", member_id)
+        IDENTITY.forget_member(group_id, member_id)
+        WARNING.clear_member(group_id, member_id)
+        SAFEGUARD.clear_member(group_id, member_id)
+        _audit_lifecycle(group_id, "member_leave", member_id)
     return None
 
 
 @group_notice.handle()
 async def handle_group_event(gateway: Gateway, event: GroupNoticeEvent) -> None:
-    reply = await process_group_event(gateway, event, manager)
+    reply = await process_group_event(gateway, event)
     if reply:
         await gateway.send(event, reply)
 

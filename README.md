@@ -20,7 +20,8 @@ Automatic Official QQ Bot v2 group administration plugin for [OpsMesh](https://g
   - `audit` (`AuditConfig` + `AuditModule`): Per-group moderation & lifecycle audit logs.
   - `moderation` (`ModerationConfig` + `ModerationModule`): Jev → DecisionAgent → ReplyAgent pipeline and QQ v2 actions.
   - `approval` (`ApprovalConfig` + `ApprovalModule`): Join-request risk review (`risk_tips` + Jev) and background polling.
-- **Single Typed Container ([manager.py](src/qq_admin/manager.py))**: `ServiceManager` holds `store`, `jev`, `decision_agent`, `reply_agent`, and all 7 feature modules directly.
+- **Direct Global Module Singletons (`src/qq_admin/modules/`)**:
+  - `IDENTITY`, `SAFEGUARD`, `WARNING`, `ESCALATION`, `AUDIT`, `MODERATION`, `APPROVAL` are exported directly as global singletons backed by `CONFIG_STORE`, while `MANAGER = ServiceManager()` holds the shared `Jev` / `DecisionAgent` / `ReplyAgent` runtime.
 - **Direct Entrypoints**:
   - `commands/` (`admin.py`, `actions.py`, `queries.py`): Directly registered OpsMesh slash commands.
   - `messages/` (`group_message.py`, `group_events.py`): Group message & lifecycle entries (`GroupJoinRequestEvent`, `GroupMemberAddEvent`, `GroupMemberRemoveEvent`, `GroupAddRobotEvent`, `GroupDelRobotEvent`).

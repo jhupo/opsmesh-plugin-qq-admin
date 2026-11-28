@@ -2,12 +2,13 @@
 
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import TYPE_CHECKING, Literal
+from typing import Literal
 from urllib.parse import urlparse
 
 from pydantic import BaseModel, Field
 from qq import Gateway, SetMemberMuteState
 
+from qq_admin.manager import MANAGER
 from qq_admin.models import (
     ATTACK_FIELDS,
     CRITICAL_FIELDS,
@@ -18,13 +19,14 @@ from qq_admin.models import (
     SafetyReport,
     TurnContext,
 )
-from qq_admin.store import ConfigStore, parse_field_value
+from qq_admin.prompts import CATALOG
+from qq_admin.store import CONFIG_STORE, ConfigStore, parse_field_value
 
-from .audit import AuditRecord
+from .audit import AUDIT, AuditRecord
 from .duration import format_duration, parse_duration
-
-if TYPE_CHECKING:
-    from qq_admin.manager import ServiceManager
+from .identity import IDENTITY
+from .safeguard import SAFEGUARD
+from .warning import WARNING
 
 WarningCategory = Literal["spam", "abuse", "ad"]
 RouteKind = Literal["allow", "attack", "critical_fast", "agent_review"]
@@ -65,9 +67,8 @@ class ActionOutcome:
 class ModerationModule:
     """Moderates group messages via 3-channel Jev routing and ReplyAgent replies."""
 
-    def __init__(self, store: ConfigStore, manager: "ServiceManager") -> None:
+    def __init__(self, store: ConfigStore) -> None:
         self._store = store
-        self._manager = manager
 
     def config(self, group_id: str | None = None) -> ModerationConfig:
         raw = self._store.load_section("moderation", group_id=group_id)
@@ -144,7 +145,7 @@ class ModerationModule:
         )
         categories = self.active_categories(group_id)
         try:
-            return await self._manager.jev.execute(
+            return await MANAGER.jev.execute(
                 text=text,
                 images=selected_images,
                 urls=self.filter_urls(group_id, urls),
@@ -185,8 +186,8 @@ class ModerationModule:
             )
             return False, None
 
-        bot_role = await self._manager.identity.bot_role(gateway, group_id)
-        if route == "critical_fast" or not self._manager.decision_agent.is_ready:
+        bot_role = await IDENTITY.bot_role(gateway, group_id)
+        if route == "critical_fast" or not MANAGER.decision_agent.is_ready:
             return await self._enforce_and_compose(
                 gateway,
                 group_id=group_id,
@@ -201,7 +202,6 @@ class ModerationModule:
         summary = report.summary(cfg.order_threshold)
         turn = TurnContext(
             gateway=gateway,
-            manager=self._manager,
             group_id=group_id,
             member_id=member_id,
             message_id=message_id,
@@ -217,7 +217,7 @@ class ModerationModule:
             f"content={text}\nimages={len(images or [])}\nurls={urls or []}\n"
             f"jev={summary}"
         )
-        decision = await self._manager.decision_agent.execute(prompt, context=turn)
+        decision = await MANAGER.decision_agent.execute(prompt, context=turn)
         return decision.action_taken, await self._reply_for(
             turn, decision, categories=hits
         )
@@ -234,20 +234,19 @@ class ModerationModule:
     ) -> tuple[bool, str | None]:
         """Execute an owner/admin @mention instruction through DecisionAgent."""
         cfg = self.config(group_id)
-        if not cfg.allow_admin_nl_control or not self._manager.decision_agent.is_ready:
+        if not cfg.allow_admin_nl_control or not MANAGER.decision_agent.is_ready:
             return False, None
         turn = TurnContext(
             gateway=gateway,
-            manager=self._manager,
             group_id=group_id,
             member_id=member_id,
             message_id=message_id,
             message_text=text,
-            bot_role=await self._manager.identity.bot_role(gateway, group_id),
+            bot_role=await IDENTITY.bot_role(gateway, group_id),
             sender_role=sender_role,
             mode="admin_command",
         )
-        decision = await self._manager.decision_agent.execute(text, context=turn)
+        decision = await MANAGER.decision_agent.execute(text, context=turn)
         reply = await self._reply_for(turn, decision)
         return decision.action_taken or bool(reply), reply
 
@@ -260,9 +259,8 @@ class ModerationModule:
     ) -> str | None:
         if not decision.should_reply and not decision.action_taken:
             return None
-        return await self._manager.reply_agent.execute(
+        return await MANAGER.reply_agent.execute(
             ReplySpec(
-                manager=self._manager,
                 group_id=turn.group_id,
                 bot_role=turn.bot_role,
                 scenario=decision.scenario,
@@ -324,11 +322,7 @@ class ModerationModule:
                 )
             else:
                 outcome = await self.kick(
-                    gateway,
-                    group_id,
-                    member_id,
-                    reason=reason,
-                    blacklist=True,
+                    gateway, group_id, member_id, reason=reason, blacklist=True
                 )
 
         if outcome.succeeded:
@@ -336,9 +330,8 @@ class ModerationModule:
         if not executed:
             return False, None
 
-        reply = await self._manager.reply_agent.execute(
+        reply = await MANAGER.reply_agent.execute(
             ReplySpec(
-                manager=self._manager,
                 group_id=group_id,
                 bot_role=bot_role,
                 scenario="critical_moderation" if fast_critical else "auto_moderation",
@@ -368,17 +361,15 @@ class ModerationModule:
         reason: str = "rule violation",
         operator_id: str = "bot",
     ) -> ActionOutcome:
-        verdict = await self._manager.safeguard.check_action(
-            gateway, group_id, member_id, "warn"
-        )
+        verdict = await SAFEGUARD.check_action(gateway, group_id, member_id, "warn")
         if not verdict.allowed:
             return self._blocked("warn", group_id, member_id, operator_id, verdict)
 
-        count, threshold = self._manager.warning.record_warning(
-            group_id, member_id, category
-        )
+        count, threshold = WARNING.record_warning(group_id, member_id, category)
         hint = (
-            self._notice("warn_threshold_hint", current=count, threshold=threshold)
+            CATALOG.format_fallback(
+                "warn_threshold_hint", current=count, threshold=threshold
+            )
             if count >= threshold
             else ""
         )
@@ -386,7 +377,7 @@ class ModerationModule:
         return ActionOutcome(
             succeeded=True,
             action="warn",
-            message=self._notice(
+            message=CATALOG.format_fallback(
                 "warn_done",
                 member_id=member_id,
                 category=category,
@@ -410,9 +401,9 @@ class ModerationModule:
             return ActionOutcome(
                 succeeded=False,
                 action="mute",
-                message=self._notice("invalid_duration", raw=duration),
+                message=CATALOG.format_fallback("invalid_duration", raw=duration),
             )
-        verdict = await self._manager.safeguard.check_action(
+        verdict = await SAFEGUARD.check_action(
             gateway, group_id, member_id, "mute", mute_seconds=parsed.seconds
         )
         if not verdict.allowed:
@@ -427,14 +418,14 @@ class ModerationModule:
         except Exception as exc:
             return self._failed("mute", group_id, member_id, operator_id, exc)
 
-        self._manager.safeguard.record_mute(group_id, member_id)
-        self._manager.safeguard.increment_daily(group_id, "mute")
+        SAFEGUARD.record_mute(group_id, member_id)
+        SAFEGUARD.increment_daily(group_id, "mute")
         label = format_duration(seconds)
         self._audit(group_id, "mute", member_id, operator_id, f"{label}: {reason}")
         return ActionOutcome(
             succeeded=True,
             action="mute",
-            message=self._notice(
+            message=CATALOG.format_fallback(
                 "mute_done", member_id=member_id, duration=label, reason=reason
             ),
         )
@@ -459,7 +450,7 @@ class ModerationModule:
         return ActionOutcome(
             succeeded=True,
             action="unmute",
-            message=self._notice("unmute_done", member_id=member_id),
+            message=CATALOG.format_fallback("unmute_done", member_id=member_id),
         )
 
     async def kick(
@@ -473,7 +464,7 @@ class ModerationModule:
         operator_id: str = "bot",
         require_confirm: bool = False,
     ) -> ActionOutcome:
-        verdict = await self._manager.safeguard.check_action(
+        verdict = await SAFEGUARD.check_action(
             gateway, group_id, member_id, "kick", require_confirm=require_confirm
         )
         if not verdict.allowed:
@@ -485,12 +476,12 @@ class ModerationModule:
         except Exception as exc:
             return self._failed("kick", group_id, member_id, operator_id, exc)
 
-        self._manager.safeguard.increment_daily(group_id, "kick")
+        SAFEGUARD.increment_daily(group_id, "kick")
         self._audit(group_id, "kick", member_id, operator_id, reason)
         return ActionOutcome(
             succeeded=True,
             action="kick",
-            message=self._notice(
+            message=CATALOG.format_fallback(
                 "kick_done",
                 member_id=member_id,
                 blacklist=str(blacklist).lower(),
@@ -507,9 +498,7 @@ class ModerationModule:
         reason: str = "rule violation",
         operator_id: str = "bot",
     ) -> ActionOutcome:
-        verdict = await self._manager.safeguard.check_action(
-            gateway, group_id, member_id, "ban"
-        )
+        verdict = await SAFEGUARD.check_action(gateway, group_id, member_id, "ban")
         if not verdict.allowed:
             return self._blocked("ban", group_id, member_id, operator_id, verdict)
         return await self._update_blacklist(
@@ -561,13 +550,13 @@ class ModerationModule:
         return ActionOutcome(
             succeeded=True,
             action="recall",
-            message=self._notice("recall_done", message_id=message_id),
+            message=CATALOG.format_fallback("recall_done", message_id=message_id),
         )
 
     async def undo(
         self, gateway: Gateway, group_id: str, member_id: str, *, operator_id: str
     ) -> ActionOutcome:
-        self._manager.warning.clear_member(group_id, member_id)
+        WARNING.clear_member(group_id, member_id)
         return await self.unmute(gateway, group_id, member_id, operator_id=operator_id)
 
     async def _update_blacklist(
@@ -592,27 +581,23 @@ class ModerationModule:
                 action, group_id, member_id, operator_id, "platform rejected openid"
             )
         if op == "add":
-            self._manager.safeguard.increment_daily(group_id, "kick")
+            SAFEGUARD.increment_daily(group_id, "kick")
         self._audit(group_id, action, member_id, operator_id, reason)
         return ActionOutcome(
             succeeded=True,
             action=action,
-            message=self._notice(f"{action}_done", member_id=member_id),
+            message=CATALOG.format_fallback(f"{action}_done", member_id=member_id),
         )
 
     async def _bot_is_admin(self, gateway: Gateway, group_id: str) -> bool:
-        role = await self._manager.identity.bot_role(gateway, group_id)
-        return role in {"owner", "admin"}
-
-    def _notice(self, key: str, **values: object) -> str:
-        return self._manager.catalog.format_fallback(key, **values)
+        return await IDENTITY.bot_role(gateway, group_id) in {"owner", "admin"}
 
     def _bot_not_admin(self, action: str) -> ActionOutcome:
         return ActionOutcome(
             succeeded=False,
             action=action,
             blocked_by="bot_not_admin",
-            message=self._notice("bot_not_admin"),
+            message=CATALOG.format_fallback("bot_not_admin"),
         )
 
     def _blocked(
@@ -623,7 +608,7 @@ class ModerationModule:
             succeeded=False,
             action=action,
             blocked_by=verdict.blocked_by,
-            message=self._notice("action_blocked", reason=verdict.reason),
+            message=CATALOG.format_fallback("action_blocked", reason=verdict.reason),
         )
 
     def _failed(
@@ -638,7 +623,7 @@ class ModerationModule:
         return ActionOutcome(
             succeeded=False,
             action=action,
-            message=self._notice("action_failed", reason=error),
+            message=CATALOG.format_fallback("action_failed", reason=error),
         )
 
     def _audit(
@@ -650,7 +635,7 @@ class ModerationModule:
         reason: str,
         succeeded: bool = True,
     ) -> None:
-        self._manager.audit.record(
+        AUDIT.record(
             AuditRecord(
                 group_id=group_id,
                 action=action,
@@ -662,7 +647,10 @@ class ModerationModule:
         )
 
 
+MODERATION = ModerationModule(CONFIG_STORE)
+
 __all__ = [
+    "MODERATION",
     "ActionOutcome",
     "ModerationConfig",
     "ModerationModule",

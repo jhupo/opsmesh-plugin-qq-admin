@@ -8,11 +8,11 @@ from typing import Literal
 from pydantic import BaseModel, Field
 from qq import Gateway
 
-from qq_admin.store import ConfigStore, parse_field_value
+from qq_admin.store import CONFIG_STORE, ConfigStore, parse_field_value
 
 from .duration import MAX_QQ_MUTE_SECONDS, MIN_QQ_MUTE_SECONDS
-from .escalation import EscalationModule
-from .identity import IdentityModule
+from .escalation import ESCALATION, EscalationModule
+from .identity import IDENTITY, IdentityModule
 
 GuardAction = Literal["warn", "mute", "kick", "ban", "recall"]
 
@@ -275,5 +275,18 @@ class SafeguardModule:
             )
         return step.action, mute_seconds
 
+    def clear(self) -> None:
+        self._daily_counts.clear()
+        self._mute_timestamps.clear()
+        self._verified_members.clear()
 
-__all__ = ["GuardAction", "PolicyVerdict", "SafeguardConfig", "SafeguardModule"]
+
+SAFEGUARD = SafeguardModule(CONFIG_STORE, IDENTITY, ESCALATION)
+
+__all__ = [
+    "SAFEGUARD",
+    "GuardAction",
+    "PolicyVerdict",
+    "SafeguardConfig",
+    "SafeguardModule",
+]

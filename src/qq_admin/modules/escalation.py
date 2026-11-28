@@ -4,9 +4,9 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from qq_admin.store import ConfigStore, parse_field_value
+from qq_admin.store import CONFIG_STORE, ConfigStore, parse_field_value
 
-from .audit import AuditModule
+from .audit import AUDIT, AuditModule
 
 
 class EscalationRule(BaseModel):
@@ -74,4 +74,6 @@ class EscalationModule:
         return matched
 
 
-__all__ = ["EscalationConfig", "EscalationModule", "EscalationRule"]
+ESCALATION = EscalationModule(CONFIG_STORE, AUDIT)
+
+__all__ = ["ESCALATION", "EscalationConfig", "EscalationModule", "EscalationRule"]

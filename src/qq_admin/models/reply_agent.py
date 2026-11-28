@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass, field
 import json
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from agents import (
     Agent,
@@ -15,18 +15,15 @@ from openai import AsyncOpenAI
 from openai.types.shared import Reasoning
 
 from qq_admin.config import Config
+from qq_admin.prompts import CATALOG
 
 from .guardrails import reply_guardrail
-
-if TYPE_CHECKING:
-    from qq_admin.manager import ServiceManager
 
 
 @dataclass(slots=True)
 class ReplySpec:
     """Live state snapshot and event facts supplied to ReplyAgent."""
 
-    manager: "ServiceManager"
     group_id: str
     bot_role: str
     scenario: str
@@ -65,9 +62,11 @@ class ReplyAgent:
         if self._client is None:
             return spec.fallback
 
-        sg_cfg = spec.manager.safeguard.config(spec.group_id)
-        daily = spec.manager.safeguard.daily_counts(spec.group_id)
-        instructions = spec.manager.catalog.reply_prompt(
+        from qq_admin.modules.safeguard import SAFEGUARD
+
+        sg_cfg = SAFEGUARD.config(spec.group_id)
+        daily = SAFEGUARD.daily_counts(spec.group_id)
+        instructions = CATALOG.reply_prompt(
             group_id=spec.group_id,
             bot_role=spec.bot_role,
             scenario=spec.scenario,

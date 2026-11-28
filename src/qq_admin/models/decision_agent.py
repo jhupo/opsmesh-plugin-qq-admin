@@ -1,7 +1,7 @@
 """System 2 Agent 1: DecisionAgent using OpenAI Responses API and .md templates."""
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Literal
+from typing import Literal
 
 from agents import (
     Agent,
@@ -16,13 +16,11 @@ from pydantic import BaseModel, Field
 from qq import Gateway
 
 from qq_admin.config import Config
+from qq_admin.prompts import CATALOG
 
 from .guardrails import injection_guardrail
 from .jev import SafetyReport
 from .tools import GROUP_ADMIN_TOOLS
-
-if TYPE_CHECKING:
-    from qq_admin.manager import ServiceManager
 
 
 @dataclass(slots=True)
@@ -30,7 +28,6 @@ class TurnContext:
     """Mutable per-turn context injected into DecisionAgent tools and guardrails."""
 
     gateway: Gateway
-    manager: "ServiceManager"
     group_id: str
     member_id: str
     message_id: str
@@ -89,15 +86,16 @@ class DecisionAgent:
                 summary="OpenAI client unavailable.",
             )
 
-        catalog = context.manager.catalog
-        recent_ops = context.manager.audit.count_member_actions(
+        from qq_admin.modules.audit import AUDIT
+
+        recent_ops = AUDIT.count_member_actions(
             context.group_id, context.member_id, within_hours=24.0
         )
-        instructions = catalog.decision_prompt(
+        instructions = CATALOG.decision_prompt(
             context.mode,
             group_id=context.group_id,
             bot_role=context.bot_role,
-            role_policy=catalog.role_policy(context.bot_role),
+            role_policy=CATALOG.role_policy(context.bot_role),
             member_id=context.member_id,
             sender_role=context.sender_role,
             recent_ops=recent_ops,

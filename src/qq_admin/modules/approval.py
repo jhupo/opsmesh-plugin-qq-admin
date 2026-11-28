@@ -1,17 +1,18 @@
-"""Event-driven join-request approval module with self-owned ApprovalConfig."""
+"""Event-driven join-request approval module with global APPROVAL singleton."""
 
-from typing import TYPE_CHECKING, Literal
+from typing import Literal
 
 from pydantic import BaseModel, Field
 from qq import Gateway, JoinRequest
 
-from qq_admin.store import ConfigStore, parse_field_value
+from qq_admin.manager import MANAGER
+from qq_admin.prompts import CATALOG
+from qq_admin.store import CONFIG_STORE, ConfigStore, parse_field_value
 
-from .audit import AuditRecord
+from .audit import AUDIT, AuditRecord
+from .identity import IDENTITY
 from .moderation import ActionOutcome
-
-if TYPE_CHECKING:
-    from qq_admin.manager import ServiceManager
+from .safeguard import SAFEGUARD
 
 
 class ApprovalConfig(BaseModel):
@@ -29,9 +30,8 @@ class ApprovalConfig(BaseModel):
 class ApprovalModule:
     """Reviews Official QQ v2 join requests via risk_tips and Jev."""
 
-    def __init__(self, store: ConfigStore, manager: "ServiceManager") -> None:
+    def __init__(self, store: ConfigStore) -> None:
         self._store = store
-        self._manager = manager
 
     def config(self, group_id: str | None = None) -> ApprovalConfig:
         raw = self._store.load_section("approval", group_id=group_id)
@@ -52,7 +52,7 @@ class ApprovalModule:
             {"question": qa.question, "answer": qa.answer}
             for qa in (verify.review_qa_list or [] if verify else [])
         ]
-        return await self._manager.jev.probability(
+        return await MANAGER.jev.probability(
             {
                 "group_id": group_id,
                 "username": request.username,
@@ -60,7 +60,7 @@ class ApprovalModule:
                 "qa_pairs": qa_pairs,
                 "risk_tips": request.risk_tips or "",
             },
-            self._manager.catalog.jev_join("is_risky_instructions"),
+            CATALOG.jev_join("is_risky_instructions"),
         )
 
     async def approve(
@@ -78,12 +78,12 @@ class ApprovalModule:
             )
         except Exception as exc:
             return self._failed("approve", group_id, member_id, operator_id, exc)
-        self._manager.safeguard.increment_daily(group_id, "approve")
+        SAFEGUARD.increment_daily(group_id, "approve")
         self._audit(group_id, "approve", member_id, operator_id, "approved")
         return ActionOutcome(
             succeeded=True,
             action="approve",
-            message=self._manager.catalog.format_fallback(
+            message=CATALOG.format_fallback(
                 "approve_done", request_id=request_id or "-", member_id=member_id
             ),
         )
@@ -110,12 +110,12 @@ class ApprovalModule:
             )
         except Exception as exc:
             return self._failed("reject", group_id, member_id, operator_id, exc)
-        self._manager.safeguard.increment_daily(group_id, "reject")
+        SAFEGUARD.increment_daily(group_id, "reject")
         self._audit(group_id, "reject", member_id, operator_id, reason)
         return ActionOutcome(
             succeeded=True,
             action="reject",
-            message=self._manager.catalog.format_fallback(
+            message=CATALOG.format_fallback(
                 "reject_done",
                 request_id=request_id or "-",
                 member_id=member_id,
@@ -130,22 +130,21 @@ class ApprovalModule:
         cfg = self.config(group_id)
         if not cfg.enabled:
             return None
-        bot_role = await self._manager.identity.bot_role(gateway, group_id)
+        bot_role = await IDENTITY.bot_role(gateway, group_id)
         if bot_role == "member":
             return None
 
-        catalog = self._manager.catalog
         decision = cfg.default_action
-        reason = catalog.format_fallback("auto_approve_reason")
+        reason = CATALOG.format_fallback("auto_approve_reason")
         if cfg.reject_on_risk_tips and request.risk_tips:
-            decision, reason = "reject", catalog.format_fallback("auto_reject_risk")
-        elif cfg.use_jev_review and self._manager.jev.is_ready:
+            decision, reason = "reject", CATALOG.format_fallback("auto_reject_risk")
+        elif cfg.use_jev_review and MANAGER.jev.is_ready:
             try:
                 risky = await self.risk_probability(group_id, request)
             except Exception:
                 risky = 0.0
             if risky >= cfg.reject_threshold:
-                decision, reason = "reject", catalog.format_fallback("auto_reject_jev")
+                decision, reason = "reject", CATALOG.format_fallback("auto_reject_jev")
 
         if decision == "ignore" or self._over_daily_limit(
             group_id, decision, cfg, owner=bot_role == "owner"
@@ -174,7 +173,7 @@ class ApprovalModule:
         limit = (
             cfg.daily_approve_limit if decision == "approve" else cfg.daily_reject_limit
         )
-        return self._manager.safeguard.daily_count(group_id, decision) >= limit
+        return SAFEGUARD.daily_count(group_id, decision) >= limit
 
     def _failed(
         self,
@@ -188,7 +187,7 @@ class ApprovalModule:
         return ActionOutcome(
             succeeded=False,
             action=action,
-            message=self._manager.catalog.format_fallback("action_failed", reason=exc),
+            message=CATALOG.format_fallback("action_failed", reason=exc),
         )
 
     def _audit(
@@ -200,7 +199,7 @@ class ApprovalModule:
         reason: str,
         succeeded: bool = True,
     ) -> None:
-        self._manager.audit.record(
+        AUDIT.record(
             AuditRecord(
                 group_id=group_id,
                 action=action,
@@ -212,4 +211,6 @@ class ApprovalModule:
         )
 
 
-__all__ = ["ApprovalConfig", "ApprovalModule"]
+APPROVAL = ApprovalModule(CONFIG_STORE)
+
+__all__ = ["APPROVAL", "ApprovalConfig", "ApprovalModule"]

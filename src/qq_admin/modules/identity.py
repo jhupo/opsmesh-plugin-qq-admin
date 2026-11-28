@@ -7,7 +7,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 from qq import Gateway
 
-from qq_admin.store import ConfigStore, parse_field_value
+from qq_admin.store import CONFIG_STORE, ConfigStore, parse_field_value
 
 
 class IdentityConfig(BaseModel):
@@ -156,5 +156,11 @@ class IdentityModule:
             reason=reason,
         )
 
+    def clear(self) -> None:
+        self._role_cache.clear()
+        self._bot_role_cache.clear()
 
-__all__ = ["IdentityConfig", "IdentityModule", "PermissionTrace"]
+
+IDENTITY = IdentityModule(CONFIG_STORE)
+
+__all__ = ["IDENTITY", "IdentityConfig", "IdentityModule", "PermissionTrace"]

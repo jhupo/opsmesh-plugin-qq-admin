@@ -7,10 +7,12 @@ from agents import RunContextWrapper, Runner
 import pytest
 
 from qq_admin import (
+    MANAGER,
+    MODERATION,
     Config,
     DecisionOutcome,
     ReplySpec,
-    ServiceManager,
+    SafetyReport,
     TurnContext,
 )
 from qq_admin.models.guardrails import (
@@ -23,15 +25,10 @@ from qq_admin.models.guardrails import (
 def _mock_jev_resp(
     *,
     nouls: dict[str, float] | None = None,
-    choices: dict[str, tuple[str, float]] | None = None,
     scores: dict[str, tuple[float, float]] | None = None,
 ) -> SimpleNamespace:
     return SimpleNamespace(
         nouls={k: SimpleNamespace(noul=v) for k, v in (nouls or {}).items()},
-        choices={
-            k: SimpleNamespace(choice=c, confidence=conf)
-            for k, (c, conf) in (choices or {}).items()
-        },
         scores={
             k: SimpleNamespace(score=s, confidence=conf)
             for k, (s, conf) in (scores or {}).items()
@@ -55,10 +52,9 @@ async def test_jev_execute_text_image_and_url_inputs() -> None:
     )
     fake_client.aclose = AsyncMock()
 
-    manager = ServiceManager(Config(jev_model="jev-1"), jev_client=fake_client)
+    MANAGER.setup(Config(jev_model="jev-1"), jev_client=fake_client)
 
-    # Text + image + url
-    report = await manager.jev.execute(
+    report = await MANAGER.jev.execute(
         text="buy cheap promo",
         images=[b"fake-png-bytes"],
         urls=["https://example.com/promo"],
@@ -70,24 +66,22 @@ async def test_jev_execute_text_image_and_url_inputs() -> None:
     assert "advertising" in report.triggered(0.70)
 
     # Image-only call automatically skips text-only attack questions
-    img_only = await manager.jev.execute(images=[b"fake-png-bytes"])
+    img_only = await MANAGER.jev.execute(images=[b"fake-png-bytes"])
     assert img_only.is_flagged(0.70)
     last_questions = fake_client.system_one.await_args.kwargs["questions"]
     assert "prompt_injection" not in last_questions
     assert "jailbreak" not in last_questions
 
-    # Link-only call works without text/images
-    url_only = await manager.jev.execute(urls=["https://example.com/ad"])
+    url_only = await MANAGER.jev.execute(urls=["https://example.com/ad"])
     assert url_only.is_flagged(0.70)
 
-    # Safe input -> not flagged
     fake_client.system_one = AsyncMock(
         return_value=_mock_jev_resp(
             nouls={"violence": 0.01, "advertising": 0.02},
             scores={"severity": (0.0, 0.99)},
         )
     )
-    safe = await manager.jev.execute(text="hello everyone")
+    safe = await MANAGER.jev.execute(text="hello everyone")
     assert not safe.is_flagged(0.70)
 
 
@@ -100,7 +94,7 @@ async def test_stateless_decision_and_reply_agents_with_guardrails(
     fake_openai = MagicMock()
     fake_openai.close = AsyncMock()
 
-    manager = ServiceManager(
+    MANAGER.setup(
         Config(model="gpt-5-mini", reasoning_effort="low"),
         jev_client=fake_jev,
         openai_client=fake_openai,
@@ -130,7 +124,6 @@ async def test_stateless_decision_and_reply_agents_with_guardrails(
     gateway = MagicMock()
     turn = TurnContext(
         gateway=gateway,
-        manager=manager,
         group_id="G1",
         member_id="U1",
         message_id="M1",
@@ -140,18 +133,18 @@ async def test_stateless_decision_and_reply_agents_with_guardrails(
         mode="auto_moderate",
     )
 
-    outcome = await manager.decision_agent.execute("moderate this", context=turn)
+    outcome = await MANAGER.decision_agent.execute("moderate this", context=turn)
     assert outcome.action_taken is True
     assert outcome.executed_actions == ["mute"]
     assert captured_agents[-1].model_settings.reasoning.effort == "low"
 
-    reply = await manager.reply_agent.execute(
+    reply = await MANAGER.reply_agent.execute(
         ReplySpec(
-            manager=manager,
             group_id="G1",
             bot_role="admin",
             scenario="auto_moderation",
             target_id="U1",
+            categories=["advertising"],
             executed_actions=["mute"],
             fallback="fallback",
         )
@@ -160,8 +153,6 @@ async def test_stateless_decision_and_reply_agents_with_guardrails(
     assert captured_agents[-1].model_settings.reasoning.effort == "low"
 
     # Guardrails: injection reuses precomputed SafetyReport (zero extra Jev call)
-    from qq_admin import SafetyReport
-
     fake_jev.system_one.reset_mock()
     turn.report = SafetyReport(prompt_injection=0.95)
     inj_out = await injection_guardrail.guardrail_function(
@@ -171,7 +162,7 @@ async def test_stateless_decision_and_reply_agents_with_guardrails(
     fake_jev.system_one.assert_not_awaited()
 
     # Optional action guardrail when explicitly enabled
-    manager.moderation.update_config("G1", "enable_action_guardrail", "true")
+    MODERATION.update_config("G1", "enable_action_guardrail", "true")
     fake_jev.system_one = AsyncMock(return_value=_mock_jev_resp(nouls={"answer": 0.20}))
     tool_data = SimpleNamespace(
         context=SimpleNamespace(
@@ -188,7 +179,6 @@ async def test_stateless_decision_and_reply_agents_with_guardrails(
         return_value=_mock_jev_resp(nouls={"violence": 0.01, "pii": 0.02})
     )
     empty_spec = ReplySpec(
-        manager=manager,
         group_id="G1",
         bot_role="admin",
         scenario="auto_moderation",

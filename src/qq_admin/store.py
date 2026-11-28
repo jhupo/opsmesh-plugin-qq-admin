@@ -223,6 +223,23 @@ class ConfigStore:
             if isinstance(sec, dict) and bool(sec.get("enabled", False))
         )
 
+    def reset(
+        self,
+        data: dict[str, Any] | None = None,
+        *,
+        path: str | Path | None = None,
+    ) -> "ConfigStore":
+        """Replace backing data/path in place so global modules stay bound."""
+        self._path = Path(path) if path else None
+        if data is not None:
+            self._data = deepcopy(data)
+        elif self._path is not None and self._path.is_file():
+            with self._path.open("rb") as fp:
+                self._data = tomllib.load(fp)
+        else:
+            self._data = {}
+        return self
+
     def flush(self) -> None:
         if self._path is None:
             return
@@ -230,4 +247,6 @@ class ConfigStore:
         self._path.write_text(dump_toml(self._data), encoding="utf-8")
 
 
-__all__ = ["ConfigStore", "dump_toml", "parse_field_value"]
+CONFIG_STORE = ConfigStore()
+
+__all__ = ["CONFIG_STORE", "ConfigStore", "dump_toml", "parse_field_value"]

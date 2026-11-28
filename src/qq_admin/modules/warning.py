@@ -4,7 +4,7 @@ import time
 
 from pydantic import BaseModel, Field
 
-from qq_admin.store import ConfigStore, parse_field_value
+from qq_admin.store import CONFIG_STORE, ConfigStore, parse_field_value
 
 
 class WarningConfig(BaseModel):
@@ -67,5 +67,10 @@ class WarningModule:
         for key in stale:
             self._warnings.pop(key, None)
 
+    def clear(self) -> None:
+        self._warnings.clear()
 
-__all__ = ["WarningConfig", "WarningModule"]
+
+WARNING = WarningModule(CONFIG_STORE)
+
+__all__ = ["WARNING", "WarningConfig", "WarningModule"]

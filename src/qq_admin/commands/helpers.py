@@ -5,9 +5,10 @@ from typing import Any
 from opsmesh.matcher import Matcher
 from qq import Gateway, GroupMessageEvent
 
-from qq_admin.manager import ServiceManager, manager
+from qq_admin.manager import MANAGER
 from qq_admin.models import ReplySpec
-from qq_admin.modules import ActionOutcome
+from qq_admin.modules import IDENTITY, ActionOutcome
+from qq_admin.prompts import CATALOG
 
 
 def command_args(event: GroupMessageEvent, prefix_words: int = 1) -> list[str]:
@@ -20,7 +21,6 @@ def command_args(event: GroupMessageEvent, prefix_words: int = 1) -> list[str]:
 async def compose_reply(
     gateway: Gateway,
     event: GroupMessageEvent,
-    manager: ServiceManager,
     *,
     scenario: str,
     fallback: str,
@@ -28,15 +28,14 @@ async def compose_reply(
     executed_actions: list[str] | None = None,
     facts: dict[str, Any] | None = None,
 ) -> str:
-    if not manager.reply_agent.is_ready:
+    if not MANAGER.reply_agent.is_ready:
         return fallback
     group_id = event.group_openid
     operator_id = event.get_user_id()
-    bot_role = await manager.identity.bot_role(gateway, group_id)
-    actor_role = await manager.identity.member_role(gateway, group_id, operator_id)
-    return await manager.reply_agent.execute(
+    bot_role = await IDENTITY.bot_role(gateway, group_id)
+    actor_role = await IDENTITY.member_role(gateway, group_id, operator_id)
+    return await MANAGER.reply_agent.execute(
         ReplySpec(
-            manager=manager,
             group_id=group_id,
             bot_role=bot_role,
             scenario=scenario,
@@ -55,18 +54,17 @@ async def require_admin(
     event: GroupMessageEvent,
     matcher: Matcher,
     command_name: str,
-) -> ServiceManager:
+) -> None:
     """Verify the sender is a group/global admin; finish silently or with denial."""
     group_id = event.group_openid
-    if await manager.identity.is_admin(gateway, group_id, event.get_user_id()):
-        return manager
-    if manager.identity.config(group_id).deny_response == "reply":
+    if await IDENTITY.is_admin(gateway, group_id, event.get_user_id()):
+        return
+    if IDENTITY.config(group_id).deny_response == "reply":
         reply = await compose_reply(
             gateway,
             event,
-            manager,
             scenario="permission_denied",
-            fallback=manager.catalog.format_fallback("denied"),
+            fallback=CATALOG.format_fallback("denied"),
             facts={"command": command_name},
         )
         await matcher.finish(reply)
@@ -77,7 +75,6 @@ async def finish_outcome(
     gateway: Gateway,
     event: GroupMessageEvent,
     matcher: Matcher,
-    manager: ServiceManager,
     outcome: ActionOutcome,
     *,
     target_id: str = "",
@@ -90,7 +87,6 @@ async def finish_outcome(
     reply = await compose_reply(
         gateway,
         event,
-        manager,
         scenario=scenario,
         fallback=outcome.message,
         target_id=target_id,

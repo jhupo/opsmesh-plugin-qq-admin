@@ -21,7 +21,15 @@ from qq import (
 )
 from qq.event import GroupAuthor
 
-from qq_admin import Config, ServiceManager, manager
+from qq_admin import (
+    APPROVAL,
+    AUDIT,
+    IDENTITY,
+    MANAGER,
+    MODERATION,
+    SAFEGUARD,
+    Config,
+)
 from qq_admin.commands import actions, admin, queries
 from qq_admin.messages import process_group_event, process_group_message
 
@@ -84,20 +92,17 @@ def _gateway(*, bot_role: str = "admin", roles: dict[str, str] | None = None):
 
 @pytest.mark.anyio
 async def test_direct_on_command_handlers() -> None:
-    manager.setup(Config())
-    manager.identity.update_config("G1", "admins", "ADMIN_1")
+    IDENTITY.update_config("G1", "admins", "ADMIN_1")
     gw = _gateway()
 
-    # Non-admin is silently ignored
     assert (
         await _invoke(admin.handle_admin_on, gw, _msg("/admin on", user_id="U1"))
         is None
     )
 
-    # /admin on, config set/get, status, perm, exempt, unexempt, undo, log
     on_reply = await _invoke(admin.handle_admin_on, gw, _msg("/admin on"))
     assert on_reply
-    assert manager.is_group_enabled("G1")
+    assert MANAGER.is_group_enabled("G1")
 
     set_reply = await _invoke(
         admin.handle_admin_config,
@@ -105,7 +110,7 @@ async def test_direct_on_command_handlers() -> None:
         _msg("/admin config set safeguard.max_mute_duration 1200"),
     )
     assert set_reply
-    assert manager.safeguard.config("G1").max_mute_duration == 1200
+    assert SAFEGUARD.config("G1").max_mute_duration == 1200
 
     get_reply = await _invoke(
         admin.handle_admin_config,
@@ -122,13 +127,12 @@ async def test_direct_on_command_handlers() -> None:
     assert "admin=True" in perm_reply
 
     assert await _invoke(admin.handle_admin_exempt, gw, _msg("/admin exempt @U1"))
-    assert "U1" in manager.safeguard.config("G1").exempt_users
+    assert "U1" in SAFEGUARD.config("G1").exempt_users
     assert await _invoke(admin.handle_admin_unexempt, gw, _msg("/admin unexempt @U1"))
-    assert "U1" not in manager.safeguard.config("G1").exempt_users
+    assert "U1" not in SAFEGUARD.config("G1").exempt_users
     assert await _invoke(admin.handle_admin_undo, gw, _msg("/admin undo @U1"))
     assert await _invoke(admin.handle_admin_log, gw, _msg("/admin log 5"))
 
-    # Direct action commands
     assert await _invoke(actions.handle_warn, gw, _msg("/warn @U1 spam flood"))
     assert await _invoke(actions.handle_mute, gw, _msg("/mute @U1 5m flood"))
     assert await _invoke(actions.handle_unmute, gw, _msg("/unmute @U1"))
@@ -139,7 +143,6 @@ async def test_direct_on_command_handlers() -> None:
     assert await _invoke(actions.handle_approve, gw, _msg("/approve U9 REQ_9"))
     assert await _invoke(actions.handle_reject, gw, _msg("/reject U9 bad"))
 
-    # Direct query commands
     assert await _invoke(queries.handle_shutlist, gw, _msg("/shutlist"))
     bl_reply = await _invoke(queries.handle_blacklist, gw, _msg("/blacklist"))
     assert bl_reply
@@ -149,9 +152,8 @@ async def test_direct_on_command_handlers() -> None:
     assert mem_reply
     assert "role=member" in mem_reply
 
-    # /admin off
     assert await _invoke(admin.handle_admin_off, gw, _msg("/admin off"))
-    assert not manager.is_group_enabled("G1")
+    assert not MANAGER.is_group_enabled("G1")
 
 
 @pytest.mark.anyio
@@ -166,38 +168,30 @@ async def test_group_message_admin_skip_and_lifecycle_events() -> None:
             scores={"severity": SimpleNamespace(score=2.0, confidence=0.92)},
         )
     )
-    manager = ServiceManager(jev_client=fake_jev)
+    MANAGER.setup(Config(), jev_client=fake_jev)
     gw = _gateway()
 
-    # Disabled group -> silent
-    handled, reply = await process_group_message(
-        gw, _msg("buy ad now", user_id="U1"), manager
-    )
+    handled, reply = await process_group_message(gw, _msg("buy ad now", user_id="U1"))
     assert not handled
     assert reply is None
 
-    # Enable group -> admins are NEVER moderated
-    manager.set_group_enabled("G1", True)
+    MANAGER.set_group_enabled("G1", True)
     admin_handled, admin_reply = await process_group_message(
-        gw, _msg("buy ad now", user_id="MOD_1"), manager
+        gw, _msg("buy ad now", user_id="MOD_1")
     )
     assert not admin_handled
     assert admin_reply is None
 
-    # Regular user message -> Jev catches violation and enforces
-    handled, reply = await process_group_message(
-        gw, _msg("buy ad now", user_id="U1"), manager
-    )
+    handled, reply = await process_group_message(gw, _msg("buy ad now", user_id="U1"))
     assert handled is True
     assert reply is not None
     gw.delete_group_message.assert_awaited_once()
     gw.set_group_members_mute.assert_awaited_once()
 
-    # Lifecycle events
-    await process_group_event(gw, GroupAddRobotEvent(group_openid="G1"), manager)
+    await process_group_event(gw, GroupAddRobotEvent(group_openid="G1"))
 
-    manager.approval.update_config("G1", "enabled", "true")
-    manager.approval.update_config("G1", "default_action", "approve")
+    APPROVAL.update_config("G1", "enabled", "true")
+    APPROVAL.update_config("G1", "default_action", "approve")
     await process_group_event(
         gw,
         GroupJoinRequestEvent(
@@ -206,19 +200,18 @@ async def test_group_message_admin_skip_and_lifecycle_events() -> None:
             member_openid="NEW_1",
             risk_tips="high risk",
         ),
-        manager,
     )
     gw.approval_join_request.assert_awaited_once()
 
-    manager.moderation.update_config("G1", "welcome_new_members", "true")
+    MODERATION.update_config("G1", "welcome_new_members", "true")
     welcome = await process_group_event(
-        gw, GroupMemberAddEvent(group_openid="G1", member_openid="NEW_2"), manager
+        gw, GroupMemberAddEvent(group_openid="G1", member_openid="NEW_2")
     )
     assert welcome
     assert "NEW_2" in welcome
 
     await process_group_event(
-        gw, GroupMemberRemoveEvent(group_openid="G1", member_openid="NEW_2"), manager
+        gw, GroupMemberRemoveEvent(group_openid="G1", member_openid="NEW_2")
     )
-    await process_group_event(gw, GroupDelRobotEvent(group_openid="G1"), manager)
-    assert manager.audit.recent_logs("G1") == []
+    await process_group_event(gw, GroupDelRobotEvent(group_openid="G1"))
+    assert AUDIT.recent_logs("G1") == []

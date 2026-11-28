@@ -7,6 +7,16 @@ from opsmesh.matcher import Matcher
 from qq import Gateway, GroupMessageEvent
 
 from qq_admin.exception import ConfigError
+from qq_admin.manager import MANAGER
+from qq_admin.modules import (
+    APPROVAL,
+    AUDIT,
+    IDENTITY,
+    MODERATION,
+    SAFEGUARD,
+    get_module,
+)
+from qq_admin.prompts import CATALOG
 
 from .helpers import command_args, compose_reply, finish_outcome, require_admin
 
@@ -25,15 +35,15 @@ admin_undo_cmd = on_command("admin undo", priority=1, block=True)
 async def handle_admin_status(
     gateway: Gateway, event: GroupMessageEvent, matcher: Matcher
 ) -> None:
-    manager = await require_admin(gateway, event, matcher, "admin status")
+    await require_admin(gateway, event, matcher, "admin status")
     args = command_args(event, prefix_words=2)
     group_id = args[0] if args else event.group_openid
-    bot_role = await manager.identity.bot_role(gateway, group_id, force=True)
-    enabled = manager.is_group_enabled(group_id)
-    safeguard = manager.safeguard.config(group_id)
-    approval = manager.approval.config(group_id)
-    counts = manager.safeguard.daily_counts(group_id)
-    notice = manager.catalog.format_fallback(
+    bot_role = await IDENTITY.bot_role(gateway, group_id, force=True)
+    enabled = MANAGER.is_group_enabled(group_id)
+    safeguard = SAFEGUARD.config(group_id)
+    approval = APPROVAL.config(group_id)
+    counts = SAFEGUARD.daily_counts(group_id)
+    notice = CATALOG.format_fallback(
         "admin_status",
         group_id=group_id,
         bot_role=bot_role,
@@ -50,7 +60,6 @@ async def handle_admin_status(
     reply = await compose_reply(
         gateway,
         event,
-        manager,
         scenario="admin_status",
         fallback=notice,
         facts={"group_id": group_id, "enabled": enabled, "daily": counts},
@@ -62,16 +71,15 @@ async def handle_admin_status(
 async def handle_admin_on(
     gateway: Gateway, event: GroupMessageEvent, matcher: Matcher
 ) -> None:
-    manager = await require_admin(gateway, event, matcher, "admin on")
+    await require_admin(gateway, event, matcher, "admin on")
     args = command_args(event, prefix_words=2)
     group_id = args[0] if args else event.group_openid
-    manager.set_group_enabled(group_id, True)
+    MANAGER.set_group_enabled(group_id, True)
     reply = await compose_reply(
         gateway,
         event,
-        manager,
         scenario="admin_on",
-        fallback=manager.catalog.format_fallback("admin_on", group_id=group_id),
+        fallback=CATALOG.format_fallback("admin_on", group_id=group_id),
         facts={"group_id": group_id, "enabled": True},
     )
     await matcher.finish(reply)
@@ -81,16 +89,15 @@ async def handle_admin_on(
 async def handle_admin_off(
     gateway: Gateway, event: GroupMessageEvent, matcher: Matcher
 ) -> None:
-    manager = await require_admin(gateway, event, matcher, "admin off")
+    await require_admin(gateway, event, matcher, "admin off")
     args = command_args(event, prefix_words=2)
     group_id = args[0] if args else event.group_openid
-    manager.set_group_enabled(group_id, False)
+    MANAGER.set_group_enabled(group_id, False)
     reply = await compose_reply(
         gateway,
         event,
-        manager,
         scenario="admin_off",
-        fallback=manager.catalog.format_fallback("admin_off", group_id=group_id),
+        fallback=CATALOG.format_fallback("admin_off", group_id=group_id),
         facts={"group_id": group_id, "enabled": False},
     )
     await matcher.finish(reply)
@@ -100,13 +107,13 @@ async def handle_admin_off(
 async def handle_admin_config(
     gateway: Gateway, event: GroupMessageEvent, matcher: Matcher
 ) -> None:
-    manager = await require_admin(gateway, event, matcher, "admin config")
+    await require_admin(gateway, event, matcher, "admin config")
     args = command_args(event, prefix_words=2)
     group_id = event.group_openid
     try:
         if len(args) >= 2 and args[0] == "get":
             mod_name, _, field_name = args[1].partition(".")
-            values = manager.module(mod_name).config(group_id).model_dump()
+            values = get_module(mod_name).config(group_id).model_dump()
             if not field_name:
                 await matcher.finish(json.dumps(values, ensure_ascii=False))
             if field_name not in values:
@@ -119,11 +126,9 @@ async def handle_admin_config(
             if not field_name:
                 raise ConfigError("Expected <module>.<field>")
             raw_val = " ".join(args[2:])
-            updated = manager.module(mod_name).update_config(
-                group_id, field_name, raw_val
-            )
+            updated = get_module(mod_name).update_config(group_id, field_name, raw_val)
             await matcher.finish(
-                manager.catalog.format_fallback(
+                CATALOG.format_fallback(
                     "config_updated",
                     group_id=group_id,
                     target=args[1],
@@ -140,16 +145,14 @@ async def handle_admin_config(
 async def handle_admin_log(
     gateway: Gateway, event: GroupMessageEvent, matcher: Matcher
 ) -> None:
-    manager = await require_admin(gateway, event, matcher, "admin log")
+    await require_admin(gateway, event, matcher, "admin log")
     args = command_args(event, prefix_words=2)
     group_id = event.group_openid
     limit = int(args[0]) if args and args[0].isdigit() else None
-    records = manager.audit.recent_logs(group_id, limit=limit)
+    records = AUDIT.recent_logs(group_id, limit=limit)
     if not records:
-        await matcher.finish(
-            manager.catalog.format_fallback("log_empty", group_id=group_id)
-        )
-    header = manager.catalog.format_fallback(
+        await matcher.finish(CATALOG.format_fallback("log_empty", group_id=group_id))
+    header = CATALOG.format_fallback(
         "log_header", group_id=group_id, count=len(records)
     )
     lines = [
@@ -163,10 +166,10 @@ async def handle_admin_log(
 async def handle_admin_perm(
     gateway: Gateway, event: GroupMessageEvent, matcher: Matcher
 ) -> None:
-    manager = await require_admin(gateway, event, matcher, "admin perm")
+    await require_admin(gateway, event, matcher, "admin perm")
     args = command_args(event, prefix_words=2)
     member_id = args[0].lstrip("@") if args else event.get_user_id()
-    trace = await manager.identity.permission_trace(
+    trace = await IDENTITY.permission_trace(
         gateway, event.group_openid, member_id, force=True
     )
     await matcher.finish(
@@ -179,42 +182,38 @@ async def handle_admin_perm(
 async def handle_admin_exempt(
     gateway: Gateway, event: GroupMessageEvent, matcher: Matcher
 ) -> None:
-    manager = await require_admin(gateway, event, matcher, "admin exempt")
+    await require_admin(gateway, event, matcher, "admin exempt")
     args = command_args(event, prefix_words=2)
     if not args:
         await matcher.finish("Usage: /admin exempt <member>")
     member_id = args[0].lstrip("@")
-    manager.safeguard.add_exempt(event.group_openid, member_id)
-    await matcher.finish(
-        manager.catalog.format_fallback("exempt_added", member_id=member_id)
-    )
+    SAFEGUARD.add_exempt(event.group_openid, member_id)
+    await matcher.finish(CATALOG.format_fallback("exempt_added", member_id=member_id))
 
 
 @admin_unexempt_cmd.handle()
 async def handle_admin_unexempt(
     gateway: Gateway, event: GroupMessageEvent, matcher: Matcher
 ) -> None:
-    manager = await require_admin(gateway, event, matcher, "admin unexempt")
+    await require_admin(gateway, event, matcher, "admin unexempt")
     args = command_args(event, prefix_words=2)
     if not args:
         await matcher.finish("Usage: /admin unexempt <member>")
     member_id = args[0].lstrip("@")
-    manager.safeguard.remove_exempt(event.group_openid, member_id)
-    await matcher.finish(
-        manager.catalog.format_fallback("exempt_removed", member_id=member_id)
-    )
+    SAFEGUARD.remove_exempt(event.group_openid, member_id)
+    await matcher.finish(CATALOG.format_fallback("exempt_removed", member_id=member_id))
 
 
 @admin_undo_cmd.handle()
 async def handle_admin_undo(
     gateway: Gateway, event: GroupMessageEvent, matcher: Matcher
 ) -> None:
-    manager = await require_admin(gateway, event, matcher, "admin undo")
+    await require_admin(gateway, event, matcher, "admin undo")
     args = command_args(event, prefix_words=2)
     if not args:
         await matcher.finish("Usage: /admin undo <member>")
     member_id = args[0].lstrip("@")
-    outcome = await manager.moderation.undo(
+    outcome = await MODERATION.undo(
         gateway, event.group_openid, member_id, operator_id=event.get_user_id()
     )
-    await finish_outcome(gateway, event, matcher, manager, outcome, target_id=member_id)
+    await finish_outcome(gateway, event, matcher, outcome, target_id=member_id)
