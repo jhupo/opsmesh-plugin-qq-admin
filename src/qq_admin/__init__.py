@@ -3,15 +3,18 @@
 from importlib.metadata import PackageNotFoundError, version
 
 from openai import AsyncOpenAI as _AsyncOpenAI
-from opsmesh import get_driver
+from opsmesh import get_driver, get_gateways
 from opsmesh.plugin import PluginMetadata, get_plugin_config
+from qq import Gateway as _QQGateway
 from typesafe_sdk import AsyncTypeSafeClient as _AsyncTypeSafeClient
 
 from .commands import bind_commands
-from .config import AdminConfig as _AdminConfig
+from .config import AgentConfig as _AgentConfig
 from .config import Config as _Config
-from .events import bind_events
-from .runtime import AdminRuntime as _AdminRuntime
+from .config import ConfigStore as _ConfigStore
+from .config import JevConfig as _JevConfig
+from .manager import ServiceManager as _ServiceManager
+from .messages import bind_messages
 
 try:
     __version__: str | None = version("opsmesh-plugin-qq-admin")
@@ -22,10 +25,10 @@ __plugin_meta__ = PluginMetadata(
     name="QQ Group Admin",
     description=(
         "Automatic Official QQ Bot v2 group administration plugin powered by "
-        "typesafe-sdk (Jev) and dual OpenAI Agents SDK controllers"
+        "TypeSafe AI Jev and dual OpenAI Agents SDK controllers"
     ),
     usage=(
-        "/admin <status|on|off|log|perm|exempt|unexempt|undo> | "
+        "/admin <status|on|off|config|session|log|perm|exempt|unexempt|undo> | "
         "/warn | /mute | /unmute | /kick | /ban | /unban | /recall | "
         "/approve | /reject | /shutlist | /blacklist | /requests | /member"
     ),
@@ -35,109 +38,134 @@ __plugin_meta__ = PluginMetadata(
     supported_adapters={"qq"},
 )
 
-_runtime: _AdminRuntime | None = None
+_manager: _ServiceManager | None = None
+
+
+def _qq_gateways() -> list[_QQGateway]:
+    return [gw for gw in get_gateways().values() if isinstance(gw, _QQGateway)]
 
 
 def configure(
-    config: _AdminConfig | None = None,
     *,
+    jev_config: _JevConfig | None = None,
+    agent_config: _AgentConfig | None = None,
+    store: _ConfigStore | None = None,
+    prompts_path: str | None = None,
     jev_client: _AsyncTypeSafeClient | None = None,
     openai_client: _AsyncOpenAI | None = None,
-) -> _AdminRuntime:
-    """Create or replace the active AdminRuntime with injectable SDK clients."""
-    global _runtime
-    cfg = config
-    if cfg is None:
+) -> _ServiceManager:
+    """Initialize or replace the active ServiceManager with injectable SDK clients."""
+    global _manager
+    if jev_config is None and agent_config is None and store is None:
         try:
-            cfg = get_plugin_config(_Config).resolve()
+            plugin_cfg = get_plugin_config(_Config)
+            jev_config, agent_config, store = plugin_cfg.build_store()
+            prompts_path = prompts_path or plugin_cfg.qq_admin_prompts or None
         except ValueError:
-            cfg = _AdminConfig()
-    _runtime = _AdminRuntime(
-        cfg,
+            jev_config = _JevConfig()
+            agent_config = _AgentConfig()
+            store = _ConfigStore()
+
+    _manager = _ServiceManager(
+        jev_config=jev_config,
+        agent_config=agent_config,
+        store=store,
+        prompts_path=prompts_path,
         jev_client=jev_client,
         openai_client=openai_client,
     )
-    return _runtime
+    return _manager
 
 
-def get_runtime() -> _AdminRuntime:
-    """Return the active AdminRuntime, creating a default instance if needed."""
-    global _runtime
-    if _runtime is None:
+def get_manager() -> _ServiceManager:
+    """Return the active ServiceManager, creating a default instance if needed."""
+    global _manager
+    if _manager is None:
         return configure()
-    return _runtime
+    return _manager
 
 
-# Auto-bind commands and event listeners when loaded under an active OpsMesh driver.
+# Auto-bind commands, message/notice entries, and lifecycle hooks under OpsMesh.
 try:
-    get_driver()
+    _driver = get_driver()
 except ValueError:
     pass
 else:
     _active = configure()
-    if _active.config.plugin.enabled:
-        bind_commands(_active)
-        bind_events(_active)
+    bind_commands(_active)
+    bind_messages(_active)
+
+    @_driver.on_startup
+    async def _on_startup() -> None:
+        _active.start(_qq_gateways)
+
+    @_driver.on_shutdown
+    async def _on_shutdown() -> None:
+        await _active.shutdown()
 
 
-from .agents import GROUP_ADMIN_TOOLS as GROUP_ADMIN_TOOLS
-from .agents import DecisionOutcome as DecisionOutcome
-from .agents import DecisionPlanner as DecisionPlanner
-from .agents import ReplyComposer as ReplyComposer
-from .agents import ReplySpec as ReplySpec
-from .agents import TurnContext as TurnContext
-from .agents import ban_member as ban_member
-from .agents import get_member as get_member
-from .agents import kick_member as kick_member
-from .agents import list_muted_members as list_muted_members
-from .agents import mute_member as mute_member
-from .agents import recall_message as recall_message
-from .agents import unban_member as unban_member
-from .agents import unmute_member as unmute_member
-from .agents import warn_member as warn_member
-from .commands import COMMAND_ROUTES as COMMAND_ROUTES
-from .commands import CommandContext as CommandContext
-from .commands import CommandRoute as CommandRoute
-from .commands import command as command
-from .commands import dispatch_command as dispatch_command
-from .config import AdminConfig as AdminConfig
-from .config import AdminSettings as AdminSettings
-from .config import AgentSettings as AgentSettings
-from .config import ApprovalSettings as ApprovalSettings
+from .commands import ACTION_COMMANDS as ACTION_COMMANDS
+from .commands import QUERY_COMMANDS as QUERY_COMMANDS
+from .commands import SUBCOMMANDS as SUBCOMMANDS
+from .commands import bind_commands as bind_commands
+from .commands import run_action as run_action
+from .commands import run_admin as run_admin
+from .commands import run_query as run_query
+from .config import AgentConfig as AgentConfig
 from .config import Config as Config
-from .config import EscalationRule as EscalationRule
-from .config import EscalationSettings as EscalationSettings
-from .config import GroupApprovalPolicy as GroupApprovalPolicy
-from .config import IdentitySettings as IdentitySettings
-from .config import JevSettings as JevSettings
-from .config import LoggingSettings as LoggingSettings
-from .config import ModerationSettings as ModerationSettings
-from .config import PluginSettings as PluginSettings
-from .config import SafeguardSettings as SafeguardSettings
-from .config import WarningSettings as WarningSettings
-from .events import EventRouter as EventRouter
+from .config import ConfigStore as ConfigStore
+from .config import JevConfig as JevConfig
+from .config import SessionMode as SessionMode
 from .exception import BotNotAdminError as BotNotAdminError
+from .exception import ConfigError as ConfigError
 from .exception import PermissionDeniedError as PermissionDeniedError
 from .exception import QQAdminError as QQAdminError
 from .exception import SafeguardBlockedError as SafeguardBlockedError
-from .jev import AsyncTypeSafeClient as AsyncTypeSafeClient
-from .jev import JevEvaluator as JevEvaluator
-from .jev import JoinRiskAssessment as JoinRiskAssessment
-from .jev import MessageAssessment as MessageAssessment
-from .jev import SafetyVerdict as SafetyVerdict
-from .moderation import ActionOutcome as ActionOutcome
-from .moderation import GroupModerator as GroupModerator
-from .moderation import JoinApprover as JoinApprover
-from .moderation import MuteDuration as MuteDuration
-from .moderation import PermissionTrace as PermissionTrace
-from .moderation import PolicyVerdict as PolicyVerdict
-from .moderation import SafeguardPolicy as SafeguardPolicy
-from .moderation import format_duration as format_duration
-from .moderation import parse_duration as parse_duration
+from .manager import ServiceManager as ServiceManager
+from .messages import bind_messages as bind_messages
+from .messages import handle_group_event as handle_group_event
+from .messages import handle_group_message as handle_group_message
+from .models import GROUP_ADMIN_TOOLS as GROUP_ADMIN_TOOLS
+from .models import AsyncTypeSafeClient as AsyncTypeSafeClient
+from .models import DecisionAgent as DecisionAgent
+from .models import DecisionOutcome as DecisionOutcome
+from .models import Jev as Jev
+from .models import ReplyAgent as ReplyAgent
+from .models import ReplySpec as ReplySpec
+from .models import TurnContext as TurnContext
+from .models import ban_member as ban_member
+from .models import get_member as get_member
+from .models import kick_member as kick_member
+from .models import list_muted_members as list_muted_members
+from .models import mute_member as mute_member
+from .models import recall_message as recall_message
+from .models import unban_member as unban_member
+from .models import unmute_member as unmute_member
+from .models import warn_member as warn_member
+from .modules import ActionOutcome as ActionOutcome
+from .modules import ApprovalConfig as ApprovalConfig
+from .modules import ApprovalModule as ApprovalModule
+from .modules import AuditConfig as AuditConfig
+from .modules import AuditModule as AuditModule
+from .modules import AuditRecord as AuditRecord
+from .modules import EscalationConfig as EscalationConfig
+from .modules import EscalationModule as EscalationModule
+from .modules import EscalationRule as EscalationRule
+from .modules import IdentityConfig as IdentityConfig
+from .modules import IdentityModule as IdentityModule
+from .modules import MessageAssessment as MessageAssessment
+from .modules import MessageSnapshot as MessageSnapshot
+from .modules import ModerationConfig as ModerationConfig
+from .modules import ModerationModule as ModerationModule
+from .modules import MuteDuration as MuteDuration
+from .modules import PermissionTrace as PermissionTrace
+from .modules import PolicyVerdict as PolicyVerdict
+from .modules import SafeguardConfig as SafeguardConfig
+from .modules import SafeguardModule as SafeguardModule
+from .modules import WarningConfig as WarningConfig
+from .modules import WarningModule as WarningModule
+from .modules import format_duration as format_duration
+from .modules import parse_duration as parse_duration
 from .resources import DEFAULT_CONFIG_PATH as DEFAULT_CONFIG_PATH
 from .resources import DEFAULT_PROMPTS_PATH as DEFAULT_PROMPTS_PATH
 from .resources import PromptCatalog as PromptCatalog
-from .runtime import AdminRuntime as AdminRuntime
-from .state import AuditRecord as AuditRecord
-from .state import GroupStateStore as GroupStateStore
-from .state import MessageSnapshot as MessageSnapshot

@@ -1,23 +1,22 @@
-"""Official QQ v2 @function_tool set named directly by domain intent."""
+"""Official QQ v2 @function_tool definitions named directly by domain intent."""
 
-from typing import Literal
+from typing import Any, Literal
 
 from agents import RunContextWrapper, function_tool
 
 from .guardrails import action_guardrail
-from .schemas import TurnContext
 
 
-def _operator_id(turn: TurnContext) -> str:
+def _operator_id(turn: Any) -> str:
     return turn.member_id if turn.mode == "admin_command" else "bot"
 
 
 @function_tool
-async def get_member(ctx: RunContextWrapper[TurnContext], member_id: str) -> str:
+async def get_member(ctx: RunContextWrapper[Any], member_id: str) -> str:
     """Query a group member's role and join timestamp from Official QQ v2."""
     turn = ctx.context
     info = await turn.gateway.get_group_member(turn.group_id, member_id)
-    turn.runtime.state.mark_member_verified(turn.group_id, member_id)
+    turn.manager.safeguard.mark_member_verified(turn.group_id, member_id)
     turn.executed_actions.append("get_member")
     summary = (
         f"member_id={info.member_openid}, role={info.member_role}, "
@@ -28,7 +27,7 @@ async def get_member(ctx: RunContextWrapper[TurnContext], member_id: str) -> str
 
 
 @function_tool
-async def list_muted_members(ctx: RunContextWrapper[TurnContext]) -> str:
+async def list_muted_members(ctx: RunContextWrapper[Any]) -> str:
     """List currently muted members and global mute mode in the group."""
     turn = ctx.context
     setting = await turn.gateway.get_group_mute_setting(turn.group_id)
@@ -43,14 +42,14 @@ async def list_muted_members(ctx: RunContextWrapper[TurnContext]) -> str:
 
 @function_tool(tool_input_guardrails=[action_guardrail])
 async def warn_member(
-    ctx: RunContextWrapper[TurnContext],
+    ctx: RunContextWrapper[Any],
     member_id: str,
     category: Literal["spam", "abuse", "ad"],
     reason: str,
 ) -> str:
     """Record a formal warning against a violating group member."""
     turn = ctx.context
-    res = await turn.runtime.moderator.warn(
+    res = await turn.manager.moderation.warn(
         turn.gateway,
         turn.group_id,
         member_id,
@@ -66,14 +65,14 @@ async def warn_member(
 
 @function_tool(tool_input_guardrails=[action_guardrail])
 async def mute_member(
-    ctx: RunContextWrapper[TurnContext],
+    ctx: RunContextWrapper[Any],
     member_id: str,
     duration_seconds: int,
     reason: str,
 ) -> str:
     """Mute a group member for duration_seconds (1..2592000)."""
     turn = ctx.context
-    res = await turn.runtime.moderator.mute(
+    res = await turn.manager.moderation.mute(
         turn.gateway,
         turn.group_id,
         member_id,
@@ -88,10 +87,10 @@ async def mute_member(
 
 
 @function_tool
-async def unmute_member(ctx: RunContextWrapper[TurnContext], member_id: str) -> str:
+async def unmute_member(ctx: RunContextWrapper[Any], member_id: str) -> str:
     """Lift a group member's mute immediately."""
     turn = ctx.context
-    res = await turn.runtime.moderator.unmute(
+    res = await turn.manager.moderation.unmute(
         turn.gateway,
         turn.group_id,
         member_id,
@@ -105,14 +104,14 @@ async def unmute_member(ctx: RunContextWrapper[TurnContext], member_id: str) -> 
 
 @function_tool(tool_input_guardrails=[action_guardrail])
 async def kick_member(
-    ctx: RunContextWrapper[TurnContext],
+    ctx: RunContextWrapper[Any],
     member_id: str,
     reason: str,
     blacklist: bool = False,
 ) -> str:
     """Remove a member from the group (call get_member first to verify role)."""
     turn = ctx.context
-    res = await turn.runtime.moderator.kick(
+    res = await turn.manager.moderation.kick(
         turn.gateway,
         turn.group_id,
         member_id,
@@ -129,13 +128,13 @@ async def kick_member(
 
 @function_tool(tool_input_guardrails=[action_guardrail])
 async def ban_member(
-    ctx: RunContextWrapper[TurnContext],
+    ctx: RunContextWrapper[Any],
     member_id: str,
     reason: str,
 ) -> str:
     """Add a member to the Official QQ v2 group blacklist."""
     turn = ctx.context
-    res = await turn.runtime.moderator.ban(
+    res = await turn.manager.moderation.ban(
         turn.gateway,
         turn.group_id,
         member_id,
@@ -149,10 +148,10 @@ async def ban_member(
 
 
 @function_tool
-async def unban_member(ctx: RunContextWrapper[TurnContext], member_id: str) -> str:
+async def unban_member(ctx: RunContextWrapper[Any], member_id: str) -> str:
     """Remove a member from the Official QQ v2 group blacklist."""
     turn = ctx.context
-    res = await turn.runtime.moderator.unban(
+    res = await turn.manager.moderation.unban(
         turn.gateway,
         turn.group_id,
         member_id,
@@ -166,13 +165,13 @@ async def unban_member(ctx: RunContextWrapper[TurnContext], member_id: str) -> s
 
 @function_tool(tool_input_guardrails=[action_guardrail])
 async def recall_message(
-    ctx: RunContextWrapper[TurnContext],
+    ctx: RunContextWrapper[Any],
     message_id: str,
     reason: str,
 ) -> str:
     """Recall a violating group message by its message_id."""
     turn = ctx.context
-    res = await turn.runtime.moderator.recall(
+    res = await turn.manager.moderation.recall(
         turn.gateway,
         turn.group_id,
         message_id,

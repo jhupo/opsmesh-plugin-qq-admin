@@ -1,28 +1,29 @@
-"""Semantic exceptions for opsmesh-plugin-qq-admin."""
+"""Domain exceptions for opsmesh-plugin-qq-admin."""
 
 
 class QQAdminError(Exception):
-    """Base exception for all QQ group administration errors."""
+    """Base exception for the QQ group administration plugin."""
+
+
+class ConfigError(QQAdminError):
+    """Raised when an online configuration key or value is invalid."""
 
 
 class BotNotAdminError(QQAdminError):
-    """Raised when the bot is neither owner nor admin in the target group."""
+    """Raised when the bot lacks group admin or owner privileges."""
 
 
 class PermissionDeniedError(QQAdminError):
-    """Raised when a command caller lacks required group or global privileges."""
+    """Raised when a user lacks permission to invoke a command."""
 
 
 class SafeguardBlockedError(QQAdminError):
-    """Raised when an action is rejected by the role-aware safeguard policy."""
-
-    def __init__(self, message: str, *, step: str = "") -> None:
-        super().__init__(message)
-        self.step = step
+    """Raised when a moderation action is blocked by SafeguardModule."""
 
 
 __all__ = [
     "BotNotAdminError",
+    "ConfigError",
     "PermissionDeniedError",
     "QQAdminError",
     "SafeguardBlockedError",

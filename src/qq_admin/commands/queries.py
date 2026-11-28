@@ -1,86 +1,105 @@
-"""Read-only inspection commands (shutlist, blacklist, requests, member)."""
+"""Read-only inspection commands: /shutlist /blacklist /requests /member."""
 
-from .registry import CommandContext, command
+import re
+
+from opsmesh import on_regex
+from opsmesh.matcher import Matcher
+from qq import Gateway, GroupMessageEvent
+
+from qq_admin.manager import ServiceManager
+
+from .helpers import check_access, event_text, finish_reply
+
+_MEMBER_RE = re.compile(r"^/member\s+@?(?P<member>\S+)$", re.IGNORECASE)
 
 
-@command(
-    "shutlist",
-    prefix="/shutlist",
-    pattern=r"^/shutlist$",
-    role="admin",
-    usage="/shutlist",
-)
-async def muted_list(ctx: CommandContext) -> str:
-    """Show currently muted group members and global mute mode."""
-    setting = await ctx.gateway.get_group_mute_setting(ctx.group_id)
+async def shutlist(
+    gateway: Gateway, event: GroupMessageEvent, manager: ServiceManager
+) -> str:
+    setting = await gateway.get_group_mute_setting(event.group_openid)
     if not setting.members:
-        return ctx.runtime.catalog.format_fallback(
+        return manager.catalog.format_fallback(
             "shutlist_empty", mode=setting.global_rule.mode
         )
-    lines = [f"Muted ({len(setting.members)}, global={setting.global_rule.mode}):"]
-    for item in setting.members[:25]:
-        lines.append(f"- {item.member_openid} until {item.mute_expire_at}")
-    return "\n".join(lines)
+    lines = [
+        f"- {m.member_openid} until {m.mute_expire_at}" for m in setting.members[:25]
+    ]
+    return "\n".join([f"global_mode={setting.global_rule.mode}", *lines])
 
 
-@command(
-    "blacklist",
-    prefix="/blacklist",
-    pattern=r"^/blacklist$",
-    role="admin",
-    usage="/blacklist",
-)
-async def blacklist(ctx: CommandContext) -> str:
-    """Show members currently on the Official QQ v2 group blacklist."""
-    res = await ctx.gateway.get_group_member_blacklist(ctx.group_id)
-    if not res.users:
-        return ctx.runtime.catalog.format_fallback("blacklist_empty")
-    lines = [f"Blacklist ({len(res.users)}):"]
-    for user in res.users[:25]:
-        lines.append(f"- {user.member_openid} banned_at={user.banned_at}")
-    return "\n".join(lines)
-
-
-@command(
-    "requests",
-    prefix="/requests",
-    pattern=r"^/requests$",
-    role="admin",
-    usage="/requests",
-)
-async def join_requests(ctx: CommandContext) -> str:
-    """List pending Official QQ v2 group join requests."""
-    res = await ctx.gateway.get_group_join_request_list(ctx.group_id)
-    if not res.list:
-        return ctx.runtime.catalog.format_fallback("requests_empty")
-    lines = [f"Pending join requests ({len(res.list)}):"]
-    for req in res.list[:20]:
-        risk = f" risk={req.risk_tips}" if req.risk_tips else ""
-        lines.append(f"- id={req.join_request_id} member={req.member_openid}{risk}")
-    return "\n".join(lines)
-
-
-@command(
-    "member",
-    prefix="/member",
-    pattern=r"^/member(?:\s+@?(?P<member>\S+))?$",
-    role="admin",
-    usage="/member [member_openid]",
-)
-async def member_profile(ctx: CommandContext, member: str = "") -> str:
-    """Inspect a group member's role and join timestamp."""
-    target = member or ctx.operator_id
-    role = await ctx.runtime.policy.member_role(
-        ctx.gateway, ctx.group_id, target, force=True
+async def blacklist(
+    gateway: Gateway, event: GroupMessageEvent, manager: ServiceManager
+) -> str:
+    result = await gateway.get_group_member_blacklist(event.group_openid)
+    if not result.users:
+        return manager.catalog.format_fallback("blacklist_empty")
+    return "\n".join(
+        f"- {u.member_openid} ({u.username or '-'})" for u in result.users[:25]
     )
-    info = await ctx.gateway.get_group_member(ctx.group_id, target)
-    ctx.runtime.state.mark_member_verified(ctx.group_id, target)
+
+
+async def requests(
+    gateway: Gateway, event: GroupMessageEvent, manager: ServiceManager
+) -> str:
+    page = await gateway.get_group_join_request_list(event.group_openid)
+    if not page.list:
+        return manager.catalog.format_fallback("requests_empty")
+    return "\n".join(
+        f"- {r.member_openid} id={r.join_request_id} risk={r.risk_tips or 'none'}"
+        for r in page.list[:20]
+    )
+
+
+async def member(
+    gateway: Gateway, event: GroupMessageEvent, manager: ServiceManager
+) -> str:
+    match = _MEMBER_RE.match(event_text(event))
+    if match is None:
+        return "Usage: /member <member>"
+    info = await gateway.get_group_member(event.group_openid, match.group("member"))
+    manager.safeguard.mark_member_verified(event.group_openid, info.member_openid)
     return (
-        f"member={info.member_openid}\n"
-        f"role={role}\n"
-        f"bot={info.bot}\n"
-        f"joined_at={info.joined_at}"
+        f"member={info.member_openid} role={info.member_role} "
+        f"bot={info.bot} joined_at={info.joined_at}"
     )
 
 
-__all__ = ["blacklist", "join_requests", "member_profile", "muted_list"]
+QUERY_COMMANDS = {
+    "shutlist": shutlist,
+    "blacklist": blacklist,
+    "requests": requests,
+    "member": member,
+}
+
+
+async def run_query(
+    name: str, gateway: Gateway, event: GroupMessageEvent, manager: ServiceManager
+) -> str | None:
+    allowed, denial = await check_access(
+        gateway, event, manager, minimum_role="admin", command_name=name
+    )
+    if not allowed:
+        return denial
+    try:
+        return await QUERY_COMMANDS[name](gateway, event, manager)
+    except Exception as exc:
+        return manager.catalog.format_fallback("action_failed", reason=exc)
+
+
+def _endpoint(name: str, manager: ServiceManager):
+    async def _handle(
+        gateway: Gateway, event: GroupMessageEvent, matcher: Matcher
+    ) -> None:
+        await finish_reply(matcher, await run_query(name, gateway, event, manager))
+
+    return _handle
+
+
+def bind_query_commands(manager: ServiceManager) -> None:
+    for name in QUERY_COMMANDS:
+        on_regex(
+            rf"^/{name}(?:\s|$)", flags=re.IGNORECASE, priority=1, block=True
+        ).append_handler(_endpoint(name, manager))
+
+
+__all__ = ["QUERY_COMMANDS", "bind_query_commands", "run_query"]

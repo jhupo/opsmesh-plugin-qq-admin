@@ -1,11 +1,24 @@
-"""Declarative Official QQ v2 slash command suite (21 commands)."""
+"""Slash commands registered directly on OpsMesh."""
 
-from . import actions as _actions  # noqa: F401
-from . import console as _console  # noqa: F401
-from . import queries as _queries  # noqa: F401
-from .registry import COMMAND_ROUTES as COMMAND_ROUTES
-from .registry import CommandContext as CommandContext
-from .registry import CommandRoute as CommandRoute
-from .registry import bind_commands as bind_commands
-from .registry import command as command
-from .registry import dispatch_command as dispatch_command
+from qq_admin.manager import ServiceManager
+
+from .actions import ACTION_COMMANDS, bind_action_commands, run_action
+from .admin import SUBCOMMANDS, bind_admin_commands, run_admin
+from .queries import QUERY_COMMANDS, bind_query_commands, run_query
+
+
+def bind_commands(manager: ServiceManager) -> None:
+    bind_admin_commands(manager)
+    bind_action_commands(manager)
+    bind_query_commands(manager)
+
+
+__all__ = [
+    "ACTION_COMMANDS",
+    "QUERY_COMMANDS",
+    "SUBCOMMANDS",
+    "bind_commands",
+    "run_action",
+    "run_admin",
+    "run_query",
+]

@@ -1,47 +1,14 @@
-# Default configuration template for opsmesh-plugin-qq-admin.
-# Copy to your bot project directory and set QQ_ADMIN_CONFIG="config.toml",
-# or override any field via QQ_ADMIN__<SECTION>__<KEY> environment variables.
-
-[plugin]
-enabled = true
-prompts_path = ""
-
-[admin]
-admins = []
-allow_group_owner = true
-owner_allowed_commands = []
-deny_response = "silent"
-
-[identity]
-role_cache_ttl_seconds = 600
-bot_role_refresh_seconds = 300
-sender_role_refresh_seconds = 120
-
-[moderation]
-enabled = true
-enabled_groups = []
-stop_on_violation = true
-allow_admin_nl_control = true
-recent_context_size = 20
+# Minimal default configuration for opsmesh-plugin-qq-admin.
+# Feature modules own their own defaults and only write per-group overrides
+# here when customized via /admin commands.
 
 [jev]
-enabled = true
 api_key = ""
 model = "jev-1"
 proxy = ""
 timeout_seconds = 10.0
-injection_block_threshold = 0.80
-warn_confidence = 0.70
-enforce_confidence = 0.82
-action_validity_threshold = 0.75
-output_safety_threshold = 0.80
-join_reject_threshold = 0.80
-enable_image_review = true
-enable_action_guardrail = true
-max_images = 4
 
 [agent]
-enabled = false
 api_key = ""
 base_url = ""
 decision_model = "gpt-5-mini"
@@ -51,62 +18,5 @@ reply_persona = ""
 use_chat_completions = false
 timeout_seconds = 30.0
 max_turns = 6
-
-[safeguard]
-max_mute_duration = 3600
-mute_cooldown = 300
-daily_mute_limit = 10
-daily_kick_limit = 3
-protected_users = []
-auto_exempt_admins = true
-kick_require_confirm = true
-
-[safeguard.exempt_users]
-
-[warning]
-enabled = true
-spam_threshold = 3
-spam_window_seconds = 600
-abuse_threshold = 1
-abuse_window_seconds = 3600
-ad_threshold = 1
-ad_window_seconds = 1800
-
-[escalation]
-enabled = true
-
-[[escalation.steps]]
-within_hours = 24.0
-count = 1
-action = "mute"
-mute_seconds = 600
-blacklist = false
-
-[[escalation.steps]]
-within_hours = 24.0
-count = 2
-action = "mute"
-mute_seconds = 1800
-blacklist = false
-
-[[escalation.steps]]
-within_hours = 72.0
-count = 3
-action = "kick"
-mute_seconds = 3600
-blacklist = true
-
-[approval]
-enabled = false
-default_action = "ignore"
-reject_on_risk_tips = true
-use_jev_review = true
-max_pending_seconds = 300
-daily_approve_limit = 10
-daily_reject_limit = 20
-check_interval_seconds = 120
-groups = []
-
-[logging]
-max_log_entries = 2000
-default_log_lines = 10
+session_mode = "fresh"
+session_db_path = ":memory:"
