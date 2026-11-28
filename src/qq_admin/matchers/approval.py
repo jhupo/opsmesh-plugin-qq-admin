@@ -13,7 +13,9 @@ from qq_admin.services import (
 
 from . import ADMIN_PERMISSION, finish_outcome, make_command_context
 
-req_cmd = on_command("requests", permission=ADMIN_PERMISSION, priority=10, block=True)
+requests_cmd = on_command(
+    "requests", permission=ADMIN_PERMISSION, priority=10, block=True
+)
 approve_cmd = on_command(
     "approve", permission=ADMIN_PERMISSION, priority=10, block=True
 )
@@ -21,10 +23,10 @@ reject_cmd = on_command("reject", permission=ADMIN_PERMISSION, priority=10, bloc
 join_notice = on_type(GroupJoinRequestEvent, priority=10, block=False)
 
 
-@req_cmd.handle()
+@requests_cmd.handle()
 async def handle_requests(gateway: Gateway, event: GroupMessageEvent) -> None:
     await finish_outcome(
-        req_cmd, list_join_requests(make_command_context(gateway, event))
+        requests_cmd, list_join_requests(make_command_context(gateway, event))
     )
 
 
@@ -69,4 +71,4 @@ async def handle_join_notice(gateway: Gateway, event: GroupJoinRequestEvent) -> 
     await get_services().auto_approve.handle_event(gateway, event)
 
 
-__all__ = ["approve_cmd", "join_notice", "reject_cmd", "req_cmd"]
+__all__ = ["approve_cmd", "join_notice", "reject_cmd", "requests_cmd"]

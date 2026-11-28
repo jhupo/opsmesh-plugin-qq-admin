@@ -1,4 +1,4 @@
-"""Unit tests for all 18 standalone public async function APIs."""
+"""Unit tests for all 19 public async function APIs."""
 
 from unittest.mock import AsyncMock, MagicMock
 
@@ -84,7 +84,7 @@ def _mock_full_gateway() -> MagicMock:
 
 
 @pytest.mark.anyio
-async def test_all_18_standalone_public_async_apis() -> None:
+async def test_all_19_public_async_apis() -> None:
     services = AdminServices.create()
     set_services(services)
     gw = _mock_full_gateway()

@@ -2,6 +2,7 @@
 
 from importlib.metadata import PackageNotFoundError, version
 
+from opsmesh import get_driver
 from opsmesh.plugin import PluginMetadata, get_plugin_config
 
 from .config import QQAdminConfig as QQAdminConfig
@@ -29,13 +30,12 @@ __plugin_meta__ = PluginMetadata(
 )
 
 
-def init_plugin(
+def configure(
     config: QQAdminConfig | None = None,
     *,
     store: StateStoreProtocol | None = None,
-    register_matchers: bool = True,
 ) -> AdminServices:
-    """Initialize plugin services and register OpsMesh command/notice matchers."""
+    """Reconfigure runtime AdminServices programmatically (optional override)."""
     cfg = config
     if cfg is None:
         try:
@@ -45,9 +45,17 @@ def init_plugin(
 
     services = AdminServices.create(cfg, store=store)
     set_services(services)
-    if register_matchers:
-        register_all_matchers(services)
     return services
+
+
+# Auto-initialize when loaded via `opsmesh.load_plugin("qq_admin")`
+try:
+    get_driver()
+except ValueError:
+    pass
+else:
+    configure()
+    register_all_matchers()
 
 
 from .config import AuditConfig as AuditConfig

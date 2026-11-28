@@ -13,16 +13,20 @@ from . import (
     make_command_context,
 )
 
-info_cmd = on_command("groupinfo", permission=ADMIN_PERMISSION, priority=10, block=True)
+group_info_cmd = on_command(
+    "groupinfo", permission=ADMIN_PERMISSION, priority=10, block=True
+)
 member_cmd = on_command("member", permission=ADMIN_PERMISSION, priority=10, block=True)
 members_cmd = on_command(
     "members", permission=ADMIN_PERMISSION, priority=10, block=True
 )
 
 
-@info_cmd.handle()
-async def handle_info(gateway: Gateway, event: GroupMessageEvent) -> None:
-    await finish_outcome(info_cmd, get_group_info(make_command_context(gateway, event)))
+@group_info_cmd.handle()
+async def handle_group_info(gateway: Gateway, event: GroupMessageEvent) -> None:
+    await finish_outcome(
+        group_info_cmd, get_group_info(make_command_context(gateway, event))
+    )
 
 
 @member_cmd.handle()
@@ -43,4 +47,4 @@ async def handle_members(gateway: Gateway, event: GroupMessageEvent) -> None:
     )
 
 
-__all__ = ["info_cmd", "member_cmd", "members_cmd"]
+__all__ = ["group_info_cmd", "member_cmd", "members_cmd"]
