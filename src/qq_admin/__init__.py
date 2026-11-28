@@ -2,12 +2,11 @@
 
 from importlib.metadata import PackageNotFoundError, version
 
-from opsmesh import get_driver, get_gateways
+from opsmesh import get_driver
 from opsmesh.plugin import PluginMetadata, get_plugin_config
-from qq import Gateway as _QQGateway
 
 from .config import Config as _Config
-from .manager import manager as _manager
+from .manager import manager
 
 try:
     __version__: str | None = version("opsmesh-plugin-qq-admin")
@@ -32,26 +31,18 @@ __plugin_meta__ = PluginMetadata(
 )
 
 
-def _qq_gateways() -> list[_QQGateway]:
-    return [gw for gw in get_gateways().values() if isinstance(gw, _QQGateway)]
-
-
 try:
     _driver = get_driver()
 except ValueError:
     pass
 else:
-    _manager.setup(get_plugin_config(_Config))
+    manager.setup(get_plugin_config(_Config))
     from . import commands as _commands  # noqa: F401
     from . import messages as _messages  # noqa: F401
 
-    @_driver.on_startup
-    async def _on_startup() -> None:
-        _manager.start(_qq_gateways)
-
     @_driver.on_shutdown
     async def _on_shutdown() -> None:
-        await _manager.shutdown()
+        await manager.shutdown()
 
 
 from .config import Config as Config

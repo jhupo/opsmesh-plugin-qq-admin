@@ -1,8 +1,5 @@
-"""Join-request approval module with self-owned ApprovalConfig."""
+"""Event-driven join-request approval module with self-owned ApprovalConfig."""
 
-import asyncio
-from collections.abc import Callable, Iterable
-from contextlib import suppress
 from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, Field
@@ -16,8 +13,6 @@ from .moderation import ActionOutcome
 if TYPE_CHECKING:
     from qq_admin.manager import ServiceManager
 
-GatewayProvider = Callable[[], Iterable[Gateway]]
-
 
 class ApprovalConfig(BaseModel):
     """Automatic join-request review settings."""
@@ -29,7 +24,6 @@ class ApprovalConfig(BaseModel):
     reject_threshold: float = Field(default=0.80, ge=0.0, le=1.0)
     daily_approve_limit: int = Field(default=10, ge=1)
     daily_reject_limit: int = Field(default=20, ge=1)
-    check_interval_seconds: int = Field(default=120, ge=0)
 
 
 class ApprovalModule:
@@ -38,7 +32,6 @@ class ApprovalModule:
     def __init__(self, store: ConfigStore, manager: "ServiceManager") -> None:
         self._store = store
         self._manager = manager
-        self._poll_task: asyncio.Task[None] | None = None
 
     def config(self, group_id: str | None = None) -> ApprovalConfig:
         raw = self._store.load_section("approval", group_id=group_id)
@@ -133,7 +126,7 @@ class ApprovalModule:
     async def review(
         self, gateway: Gateway, group_id: str, request: JoinRequest
     ) -> ActionOutcome | None:
-        """Decide and act on one pending join request; None means ignored."""
+        """Decide and act on one join request event; None means ignored."""
         cfg = self.config(group_id)
         if not cfg.enabled:
             return None
@@ -172,44 +165,6 @@ class ApprovalModule:
             request_id=request.join_request_id,
             reason=reason,
         )
-
-    async def review_pending(self, gateway: Gateway, group_id: str) -> int:
-        """Review every pending request of one group; returns handled count."""
-        if not self.config(group_id).enabled:
-            return 0
-        try:
-            page = await gateway.get_group_join_request_list(group_id)
-        except Exception:
-            return 0
-        handled = 0
-        for request in page.list:
-            if await self.review(gateway, group_id, request) is not None:
-                handled += 1
-        return handled
-
-    def start_polling(self, gateways: GatewayProvider) -> None:
-        if self._poll_task is not None and not self._poll_task.done():
-            return
-
-        async def _poll_forever() -> None:
-            while True:
-                interval = self.config().check_interval_seconds
-                await asyncio.sleep(max(30, interval or 120))
-                if interval <= 0:
-                    continue
-                for gateway in gateways():
-                    for group_id in self._store.enabled_groups():
-                        await self.review_pending(gateway, group_id)
-
-        self._poll_task = asyncio.create_task(_poll_forever())
-
-    async def stop_polling(self) -> None:
-        if self._poll_task is None:
-            return
-        self._poll_task.cancel()
-        with suppress(asyncio.CancelledError):
-            await self._poll_task
-        self._poll_task = None
 
     def _over_daily_limit(
         self, group_id: str, decision: str, cfg: ApprovalConfig, *, owner: bool
@@ -257,4 +212,4 @@ class ApprovalModule:
         )
 
 
-__all__ = ["ApprovalConfig", "ApprovalModule", "GatewayProvider"]
+__all__ = ["ApprovalConfig", "ApprovalModule"]

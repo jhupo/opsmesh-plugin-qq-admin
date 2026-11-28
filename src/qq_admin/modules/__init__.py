@@ -1,6 +1,6 @@
 """Self-contained group administration feature modules."""
 
-from .approval import ApprovalConfig, ApprovalModule, GatewayProvider
+from .approval import ApprovalConfig, ApprovalModule
 from .audit import AuditConfig, AuditModule, AuditRecord
 from .duration import MuteDuration, format_duration, parse_duration
 from .escalation import EscalationConfig, EscalationModule, EscalationRule
@@ -26,7 +26,6 @@ __all__ = [
     "EscalationConfig",
     "EscalationModule",
     "EscalationRule",
-    "GatewayProvider",
     "IdentityConfig",
     "IdentityModule",
     "MessageAssessment",

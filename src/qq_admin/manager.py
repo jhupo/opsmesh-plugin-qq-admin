@@ -11,7 +11,6 @@ from qq_admin.modules import (
     ApprovalModule,
     AuditModule,
     EscalationModule,
-    GatewayProvider,
     IdentityModule,
     ModerationModule,
     SafeguardModule,
@@ -106,11 +105,7 @@ class ServiceManager:
             raise ConfigError(f"Unknown module: {name}")
         return module
 
-    def start(self, gateways: GatewayProvider) -> None:
-        self.approval.start_polling(gateways)
-
     async def shutdown(self) -> None:
-        await self.approval.stop_polling()
         await self.jev.close()
         if self._owns_openai and self._openai_client is not None:
             await self._openai_client.close()
