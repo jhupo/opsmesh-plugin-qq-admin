@@ -766,9 +766,14 @@ async def evaluate_and_handle_join_request(
     if aa.reject_on_risk_tips and req.risk_tips:
         decision = "reject"
         reason = render_fallback_message(runtime.prompts, "auto_reject_risk")
-    elif aa.use_jev_review and runtime.jev_client.is_ready:
+    elif (
+        aa.use_jev_review
+        and runtime.jev_client is not None
+        and runtime.config.jev.enabled
+    ):
         risk = await evaluate_join_request(
             runtime.jev_client,
+            runtime.config.jev,
             runtime.prompts,
             verify_message=verify_text,
             qa_pairs=qa_pairs,

@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any
 from .config import QQAdminConfig
 
 if TYPE_CHECKING:
-    from .jev import JevClient
+    from typesafe_sdk import AsyncTypeSafeClient
 
 
 @dataclass(frozen=True, slots=True)
@@ -247,7 +247,9 @@ class PluginRuntime:
 
     config: QQAdminConfig
     state: AdminState
-    jev_client: "JevClient"
+    jev_client: "AsyncTypeSafeClient | None" = None
+    jev_http_client: Any | None = None
+    owns_jev_client: bool = False
     prompts: dict[str, Any] = field(default_factory=dict)
 
 

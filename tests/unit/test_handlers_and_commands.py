@@ -14,13 +14,13 @@ from qq import (
     Message,
 )
 from qq.event.models import GroupAuthor
+from typesafe_sdk import AsyncTypeSafeClient, ChoiceAnswer, NoulAnswer, ScoreAnswer
 
 from qq_admin import (
     AdminConfig,
     AdminState,
     AutoModerateConfig,
     ExecutionReport,
-    JevClient,
     JevConfig,
     LLMConfig,
     PluginRuntime,
@@ -79,23 +79,31 @@ async def test_jev_clean_chat_stays_silent_and_violation_runs_dual_agents() -> N
         jev=JevConfig(enabled=True, api_key="ts-test"),
         llm=LLMConfig(enabled=True, api_key="sk-test"),
     )
-    sdk_mock = AsyncMock()
+    sdk_mock = AsyncMock(spec=AsyncTypeSafeClient)
     runtime = PluginRuntime(
         config=cfg,
         state=AdminState(cfg),
-        jev_client=JevClient(cfg.jev, sdk_client=sdk_mock),
+        jev_client=sdk_mock,
         prompts=prompts,
     )
     gw = _mock_gateway(bot_role="admin", member_roles={"U1": "member"})
 
     # 1. Clean normal chat -> Jev returns none -> 100% silent
     sdk_mock.system_one.return_value = SimpleNamespace(
-        answers={
-            "is_prompt_injection": SimpleNamespace(noul=0.01),
-            "text_violation_type": SimpleNamespace(choice="none", confidence=0.95),
-            "is_friendly_banter": SimpleNamespace(noul=0.10),
-            "violation_severity": SimpleNamespace(score=0.0, confidence=0.95),
-        }
+        nouls={
+            "is_prompt_injection": NoulAnswer(type="noul", noul=0.01),
+            "is_friendly_banter": NoulAnswer(type="noul", noul=0.10),
+        },
+        choices={
+            "text_violation_type": ChoiceAnswer(
+                type="choice", choice="none", confidence=0.95, probabilities={}
+            )
+        },
+        scores={
+            "violation_severity": ScoreAnswer(
+                type="score", score=0.0, confidence=0.95, legend={}, probabilities={}
+            )
+        },
     )
     assert (
         await handle_group_message_event(
@@ -116,14 +124,23 @@ async def test_jev_clean_chat_stays_silent_and_violation_runs_dual_agents() -> N
 
     # 3. Jev flags commercial_ad -> DecisionAgent executes -> ReplyAgent phrases reply
     sdk_mock.system_one.return_value = SimpleNamespace(
-        answers={
-            "is_prompt_injection": SimpleNamespace(noul=0.02),
-            "text_violation_type": SimpleNamespace(
-                choice="commercial_ad", confidence=0.93
-            ),
-            "is_friendly_banter": SimpleNamespace(noul=0.01),
-            "violation_severity": SimpleNamespace(score=2.6, confidence=0.91),
-        }
+        nouls={
+            "is_prompt_injection": NoulAnswer(type="noul", noul=0.02),
+            "is_friendly_banter": NoulAnswer(type="noul", noul=0.01),
+        },
+        choices={
+            "text_violation_type": ChoiceAnswer(
+                type="choice",
+                choice="commercial_ad",
+                confidence=0.93,
+                probabilities={},
+            )
+        },
+        scores={
+            "violation_severity": ScoreAnswer(
+                type="score", score=2.6, confidence=0.91, legend={}, probabilities={}
+            )
+        },
     )
     matcher = MagicMock()
     report = ExecutionReport(
@@ -197,7 +214,7 @@ async def test_admin_console_and_dynamic_permission_denied_reply() -> None:
     runtime = PluginRuntime(
         config=cfg,
         state=AdminState(cfg),
-        jev_client=JevClient(cfg.jev),
+        jev_client=None,
         prompts=prompts,
     )
     gw = _mock_gateway(

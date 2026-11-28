@@ -20,10 +20,10 @@ flowchart TD
 - **Agent 1 (`agents/decision_agent.py`)**：只关心“要不要管、管谁、调哪些工具”。低温度（`0.0`）保证工具调用精准稳定，受 `@input_guardrail`（Jev 注入检测）和 `@tool_input_guardrail`（8 步硬护栏 + Jev 动作证据二审）约束，只输出结构化 `ExecutionReport`，不操心文案风格。
 - **Agent 2 (`agents/reply_agent.py`)**：不挂载任何写工具，只接收**当前实时状态**（群 ID、Bot 角色、今日禁言/踢人计数与上限、操作者与目标身份）、**角色人设提示词**（`resources/prompts.toml` `[reply_agent]` 或 `QQ_ADMIN__LLM__REPLY_PERSONA`）和**真实执行结果**（违规处置、权限拒绝、护栏拦截、命令反馈）。较高温度（默认 `0.7`）让每次群管回复自然贴合当下语境、避免死板复读，同时受 `@output_guardrail`（防假执行 + Jev 输出安全复核）兜底。
 
-## 3. 可注入的 `JevClient`（`qq_admin/jev/`）
+## 3. 直接使用官方 `typesafe-sdk`（`AsyncTypeSafeClient`）
 
-- `JevClient(config, sdk_client=...)` 统一管理 `AsyncTypeSafeClient` 与可选代理 `httpx.AsyncClient` 的启停；
-- 所有评估函数（`evaluate_message`、`evaluate_join_request`、`check_input_injection`、`check_action_validity`、`check_output_safety`）与所有 Guardrail 均**通过参数显式接收 `JevClient`**，不在函数内部写死全局客户端，既方便多实例/宿主共享客户端，也让单元测试 100% 确定性可控。
+- 不在官方 SDK 外再包一层多余的代理客户端：`jev/client.py` 仅提供 `create_jev_client(cfg)` / `close_jev_client(client)` 工厂与生命周期管理（支持自动读取 `TYPESAFE_API_KEY` 环境变量以及通过 `httpx2.AsyncClient` 配置代理）；
+- 所有评估器（`evaluate_message`、`evaluate_join_request`、`check_input_injection`、`check_action_validity`、`check_output_safety`）直接接收 `AsyncTypeSafeClient`，调用 `client.system_one(...)` 并按官方 `SystemOneResponse` 契约读取 `resp.nouls` / `resp.choices` / `resp.scores`。
 
 ## 4. 角色感知 8 步硬护栏（`moderation/guard.py`）
 

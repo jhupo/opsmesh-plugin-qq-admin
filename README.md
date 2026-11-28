@@ -14,9 +14,9 @@ src/qq_admin/
 ├── state.py                  # 内存态运行时状态（角色缓存/计数/审计日志/近期消息）与 PluginRuntime
 ├── resources/
 │   └── prompts.toml          # 全部中文提示词、Jev 评判标准、角色人设与兜底文案（.py 零中文）
-├── jev/                      # System 1：可注入的 JevClient 与校准评估器
-│   ├── client.py             # JevClient 封装（支持外部传入/注入，不写死全局单例）
-│   ├── evaluators.py         # evaluate_message / evaluate_join_request / check_* 三项 Guardrail
+├── jev/                      # System 1：直接使用官方 typesafe-sdk AsyncTypeSafeClient
+│   ├── client.py             # create_jev_client / close_jev_client 工厂与生命周期辅助
+│   ├── evaluators.py         # evaluate_message / evaluate_join_request / check_*（直调 client.system_one）
 │   └── schemas.py            # MessageEvaluation / JoinRiskEvaluation / GuardVerdict
 ├── moderation/               # 硬护栏与官方 QQ v2 直接执行层
 │   ├── guard.py              # 角色感知 8 步硬护栏、权限决策链、处罚阶梯
@@ -44,13 +44,14 @@ opsmesh.load_plugin("qq_admin")
 opsmesh.run()
 ```
 
-支持注入自定义 `JevClient`（例如共享宿主代理或测试 Mock 客户端）：
+支持直接传入官方 `typesafe_sdk.AsyncTypeSafeClient`（例如共享宿主客户端或自定义 `httpx2` 代理）：
 
 ```python
-from qq_admin import JevClient, JevConfig, QQAdminConfig, configure
+from typesafe_sdk import AsyncTypeSafeClient
+from qq_admin import QQAdminConfig, configure
 
-jev = JevClient(JevConfig(enabled=True, api_key="ts-your-key", model="jev-1"))
-configure(QQAdminConfig(), jev_client=jev)
+client = AsyncTypeSafeClient(api_key="ts-your-key", model="jev-1")
+configure(QQAdminConfig(), jev_client=client)
 ```
 
 ## 文档导航

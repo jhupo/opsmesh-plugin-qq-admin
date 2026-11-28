@@ -60,7 +60,10 @@ async def prompt_injection_guardrail(
             tripwire_triggered=prob >= cfg.injection_block_threshold,
         )
     verdict = await check_input_injection(
-        mctx.runtime.jev_client, mctx.runtime.prompts, _flatten_input(raw_input)
+        mctx.runtime.jev_client,
+        mctx.runtime.config.jev,
+        mctx.runtime.prompts,
+        _flatten_input(raw_input),
     )
     return GuardrailFunctionOutput(
         output_info=verdict.model_dump(),
@@ -99,7 +102,11 @@ async def moderation_tool_guardrail(data: Any) -> ToolGuardrailFunctionOutput:
             f"Safeguard blocked ({decision.step}): {decision.reason}"
         )
 
-    if mctx.mode == "auto_moderate" and mctx.runtime.jev_client.is_ready:
+    if (
+        mctx.mode == "auto_moderate"
+        and mctx.runtime.jev_client is not None
+        and mctx.runtime.config.jev.enabled
+    ):
         evidence: dict[str, Any] = {
             "group_openid": mctx.group_openid,
             "sender_openid": mctx.member_openid,
@@ -113,6 +120,7 @@ async def moderation_tool_guardrail(data: Any) -> ToolGuardrailFunctionOutput:
 
         verdict = await check_action_validity(
             mctx.runtime.jev_client,
+            mctx.runtime.config.jev,
             mctx.runtime.prompts,
             proposal={"tool": tool_name, "arguments": args},
             evidence=evidence,
@@ -160,7 +168,7 @@ async def reply_output_guardrail(
             )
 
     verdict = await check_output_safety(
-        rctx.runtime.jev_client, rctx.runtime.prompts, text
+        rctx.runtime.jev_client, rctx.runtime.config.jev, rctx.runtime.prompts, text
     )
     return GuardrailFunctionOutput(
         output_info=verdict.model_dump(),

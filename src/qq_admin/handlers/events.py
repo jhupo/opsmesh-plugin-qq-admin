@@ -21,7 +21,7 @@ from qq_admin.agents import (
     generate_reply,
     run_decision_agent,
 )
-from qq_admin.jev import evaluate_message
+from qq_admin.jev import close_jev_client, create_jev_client, evaluate_message
 from qq_admin.moderation import (
     enforce_escalation_violation,
     evaluate_and_handle_join_request,
@@ -142,8 +142,8 @@ async def handle_group_message_event(
                 return True
             return report.action_taken
 
-    # Branch B: Pure Jev-driven violation detection (zero brittle regex/burst rules).
-    if not runtime.jev_client.is_ready:
+    # Branch B: Pure Jev-driven violation detection via AsyncTypeSafeClient.
+    if runtime.jev_client is None or not cfg.jev.enabled:
         return False
 
     images: list[bytes] = []
@@ -152,6 +152,7 @@ async def handle_group_message_event(
 
     jev_eval = await evaluate_message(
         runtime.jev_client,
+        cfg.jev,
         runtime.prompts,
         text=plain_text,
         group_openid=group_openid,
@@ -312,7 +313,11 @@ def register_event_handlers(runtime: PluginRuntime) -> None:
     async def _on_startup() -> None:
         if not runtime.config.enabled:
             return
-        await runtime.jev_client.startup()
+        if runtime.jev_client is None and runtime.config.jev.enabled:
+            client, http_client = create_jev_client(runtime.config.jev)
+            runtime.jev_client = client
+            runtime.jev_http_client = http_client
+            runtime.owns_jev_client = client is not None
         if (
             runtime.config.auto_approve.enabled or runtime.config.auto_approve.groups
         ) and runtime.config.auto_approve.check_interval_seconds > 0:
@@ -325,7 +330,11 @@ def register_event_handlers(runtime: PluginRuntime) -> None:
             if not task.done():
                 task.cancel()
         _background_tasks.clear()
-        await runtime.jev_client.shutdown()
+        if runtime.owns_jev_client:
+            await close_jev_client(runtime.jev_client, runtime.jev_http_client)
+            runtime.jev_client = None
+            runtime.jev_http_client = None
+            runtime.owns_jev_client = False
 
 
 __all__ = [

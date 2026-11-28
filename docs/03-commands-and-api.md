@@ -18,14 +18,15 @@
 
 > 当 `QQ_ADMIN__LLM__ENABLED=true` 时，管控命令的执行结果、护栏拦截与权限拒绝均交由 `ReplyAgent` 结合实时状态与角色提示词自然回复；关闭 LLM 时回退到 `resources/prompts.toml` 的 `[fallback_messages]`。
 
-## 3. 外部注入 `JevClient` 与直接调用
+## 3. 外部注入官方 `AsyncTypeSafeClient` 与直接调用
 
 ```python
+from typesafe_sdk import AsyncTypeSafeClient
 from qq import Gateway
-from qq_admin import JevClient, JevConfig, QQAdminConfig, configure, get_runtime, mute_member
+from qq_admin import QQAdminConfig, configure, get_runtime, mute_member
 
-jev = JevClient(JevConfig(enabled=True, api_key="ts-your-key"))
-configure(QQAdminConfig(), jev_client=jev)
+client = AsyncTypeSafeClient(api_key="ts-your-key", model="jev-1")
+configure(QQAdminConfig(), jev_client=client)
 
 async def mute_from_hook(gateway: Gateway, group_openid: str, member_openid: str) -> None:
     res = await mute_member(

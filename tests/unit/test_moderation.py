@@ -15,6 +15,7 @@ from qq import (
     ReviewQA,
     VerifyInfo,
 )
+from typesafe_sdk import AsyncTypeSafeClient, NoulAnswer
 
 from qq_admin import (
     AdminConfig,
@@ -23,7 +24,6 @@ from qq_admin import (
     AutoModerateConfig,
     EscalationConfig,
     EscalationStep,
-    JevClient,
     JevConfig,
     PluginRuntime,
     QQAdminConfig,
@@ -213,15 +213,15 @@ async def test_direct_v2_actions_and_jev_join_review() -> None:
             max_pending_seconds=300,
         ),
     )
-    sdk_mock = AsyncMock()
+    sdk_mock = AsyncMock(spec=AsyncTypeSafeClient)
     sdk_mock.system_one.side_effect = [
-        SimpleNamespace(answers={"matches": SimpleNamespace(noul=0.92)}),
-        SimpleNamespace(answers={"matches": SimpleNamespace(noul=0.10)}),
+        SimpleNamespace(nouls={"matches": NoulAnswer(type="noul", noul=0.92)}),
+        SimpleNamespace(nouls={"matches": NoulAnswer(type="noul", noul=0.10)}),
     ]
     runtime = PluginRuntime(
         config=cfg,
         state=AdminState(cfg),
-        jev_client=JevClient(cfg.jev, sdk_client=sdk_mock),
+        jev_client=sdk_mock,
         prompts=prompts,
     )
     gw = _mock_gateway(bot_role="admin")
