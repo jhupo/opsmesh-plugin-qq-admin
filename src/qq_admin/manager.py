@@ -1,17 +1,10 @@
 """ServiceManager: typed holder of shared OpenAI/Jev clients and feature modules."""
 
-import os
 from typing import Any
 
 from openai import AsyncOpenAI
 
-from qq_admin.config import (
-    ConfigStore,
-    DecisionAgentConfig,
-    JevConfig,
-    OpenAIConfig,
-    ReplyAgentConfig,
-)
+from qq_admin.config import Config
 from qq_admin.exception import ConfigError
 from qq_admin.models import AsyncTypeSafeClient, DecisionAgent, Jev, ReplyAgent
 from qq_admin.modules import (
@@ -25,15 +18,16 @@ from qq_admin.modules import (
     WarningModule,
 )
 from qq_admin.resources import PromptCatalog
+from qq_admin.store import ConfigStore
 
 
-def _build_openai_client(cfg: OpenAIConfig) -> AsyncOpenAI | None:
-    api_key = cfg.secret_value or os.environ.get("OPENAI_API_KEY", "").strip()
+def _build_openai_client(cfg: Config) -> AsyncOpenAI | None:
+    api_key = cfg.effective_openai_key
     if not api_key:
         return None
     kwargs: dict[str, Any] = {"api_key": api_key, "timeout": cfg.timeout_seconds}
-    if cfg.base_url.strip():
-        kwargs["base_url"] = cfg.base_url.strip()
+    if cfg.openai_base_url.strip():
+        kwargs["base_url"] = cfg.openai_base_url.strip()
     return AsyncOpenAI(**kwargs)
 
 
@@ -42,30 +36,27 @@ class ServiceManager:
 
     def __init__(
         self,
+        config: Config | None = None,
         *,
-        jev_config: JevConfig | None = None,
-        openai_config: OpenAIConfig | None = None,
-        decision_config: DecisionAgentConfig | None = None,
-        reply_config: ReplyAgentConfig | None = None,
         store: ConfigStore | None = None,
-        prompts_path: str | None = None,
         jev_client: AsyncTypeSafeClient | None = None,
         openai_client: AsyncOpenAI | None = None,
     ) -> None:
-        self.store = store or ConfigStore()
-        self.catalog = PromptCatalog.load(prompts_path)
+        cfg = config or Config()
+        self.config = cfg
+        self.store = store or (
+            ConfigStore.from_toml(cfg.config_path)
+            if cfg.config_path.strip()
+            else ConfigStore()
+        )
+        self.catalog = PromptCatalog.load(cfg.prompts_path or None)
 
-        oa_cfg = openai_config or OpenAIConfig()
         self._owns_openai = openai_client is None
-        self._openai_client = openai_client or _build_openai_client(oa_cfg)
+        self._openai_client = openai_client or _build_openai_client(cfg)
 
-        self.jev = Jev(jev_config or JevConfig(), client=jev_client)
-        self.decision_agent = DecisionAgent(
-            decision_config or DecisionAgentConfig(), client=self._openai_client
-        )
-        self.reply_agent = ReplyAgent(
-            reply_config or ReplyAgentConfig(), client=self._openai_client
-        )
+        self.jev = Jev(cfg, client=jev_client)
+        self.decision_agent = DecisionAgent(cfg, client=self._openai_client)
+        self.reply_agent = ReplyAgent(cfg, client=self._openai_client)
 
         self.identity = IdentityModule(self.store)
         self.audit = AuditModule(self.store)

@@ -1,10 +1,7 @@
 """Thin TypeSafe AI Jev model runner exposing execute(inputs, outputs)."""
 
 from collections.abc import Mapping
-import os
-from typing import Any
 
-import httpx2
 from typesafe_sdk import (
     AsyncTypeSafeClient,
     Choice,
@@ -15,7 +12,7 @@ from typesafe_sdk import (
     SystemOneResponse,
 )
 
-from qq_admin.config import JevConfig
+from qq_admin.config import Config
 
 JevQuestion = Noul | Choice | Score
 
@@ -27,44 +24,27 @@ class Jev:
 
     def __init__(
         self,
-        config: JevConfig,
+        config: Config,
         *,
         client: AsyncTypeSafeClient | None = None,
     ) -> None:
         self.config = config
         self._client = client
         self._owns_client = client is None
-        self._http_client: httpx2.AsyncClient | None = None
-
-    @property
-    def api_key(self) -> str:
-        return (
-            self.config.secret_value or os.environ.get("TYPESAFE_API_KEY", "").strip()
-        )
 
     @property
     def is_ready(self) -> bool:
-        return self._client is not None or bool(self.api_key)
+        return self._client is not None or bool(self.config.effective_jev_key)
 
     def _get_client(self) -> AsyncTypeSafeClient:
-        if self._client is not None:
-            return self._client
-        kwargs: dict[str, Any] = {
-            "api_key": self.api_key,
-            "model": self.config.model,
-            "timeout": self.config.timeout_seconds,
-            "headers": _IMAGE_HEADERS,
-        }
-        if self.config.proxy.strip():
-            self._http_client = httpx2.AsyncClient(
-                proxy=self.config.proxy.strip(),
-                http2=True,
+        if self._client is None:
+            self._client = AsyncTypeSafeClient(
+                api_key=self.config.effective_jev_key,
+                model=self.config.jev_model,
                 timeout=self.config.timeout_seconds,
                 headers=_IMAGE_HEADERS,
             )
-            kwargs["http_client"] = self._http_client
-        self._client = AsyncTypeSafeClient(**kwargs)
-        self._owns_client = True
+            self._owns_client = True
         return self._client
 
     async def execute(
@@ -78,7 +58,7 @@ class Jev:
         return await self._get_client().system_one(
             state=inputs,
             questions=outputs,
-            model=self.config.model,
+            model=self.config.jev_model,
             assets=images or None,
         )
 
@@ -91,9 +71,6 @@ class Jev:
         if self._owns_client and self._client is not None:
             await self._client.aclose()
             self._client = None
-        if self._http_client is not None:
-            await self._http_client.aclose()
-            self._http_client = None
 
 
 __all__ = ["AsyncTypeSafeClient", "Jev", "JevQuestion"]

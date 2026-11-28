@@ -8,7 +8,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 from qq import Gateway
 
-from qq_admin.config import ConfigStore, parse_field_value
+from qq_admin.store import ConfigStore, parse_field_value
 
 from .duration import MAX_QQ_MUTE_SECONDS, MIN_QQ_MUTE_SECONDS
 from .escalation import EscalationModule

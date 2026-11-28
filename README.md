@@ -4,7 +4,7 @@ Automatic Official QQ Bot v2 group administration plugin for [OpsMesh](https://g
 
 ## Architecture
 
-- **Minimal Base Config ([config.toml](src/qq_admin/resources/config.toml))**: Only `[jev]`, one shared `[openai]` Responses API endpoint (`OpenAIConfig`), plus `[decision_agent]` and `[reply_agent]` (`DecisionAgentConfig` / `ReplyAgentConfig` inheriting `BaseAgentConfig` with `model`, `reasoning_effort`, `temperature`, `max_turns`). Every feature module owns its own defaults and writes per-group overrides only when customized online via `/admin`.
+- **Minimal Flat Config ([config.py](src/qq_admin/config.py), [config.toml](src/qq_admin/resources/config.toml))**: One flat `Config` (`jev_api_key`, `jev_model`, `openai_api_key`, `openai_base_url`, `model`, `reasoning_effort`, `timeout_seconds`). Every feature module owns its own defaults and persists per-group overrides via `ConfigStore` only when customized online via `/admin`.
 - **Stateless Model Runners (`src/qq_admin/models/`)**:
   - `Jev.execute(inputs, outputs, images=...)`: thin wrapper over official `typesafe-sdk` `AsyncTypeSafeClient`.
   - `DecisionAgent.execute(prompt, context=...)`: stateless tool-calling moderation decision agent (`temperature=0.0`).

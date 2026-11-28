@@ -1,4 +1,4 @@
-"""Tests for minimal config.toml, BaseAgentConfig inheritance, and module configs."""
+"""Tests for single flat Config, ConfigStore persistence, and module configs."""
 
 from pathlib import Path
 
@@ -8,33 +8,21 @@ import qq_admin
 from qq_admin import (
     DEFAULT_CONFIG_PATH,
     DEFAULT_PROMPTS_PATH,
-    BaseAgentConfig,
+    Config,
     ConfigError,
     ConfigStore,
-    DecisionAgentConfig,
-    JevConfig,
-    OpenAIConfig,
     PromptCatalog,
-    ReplyAgentConfig,
     ServiceManager,
 )
 
 
 def test_minimal_default_config_and_clean_exports() -> None:
     store = ConfigStore.from_toml(DEFAULT_CONFIG_PATH)
-    raw = store.raw_data()
-    assert set(raw.keys()) == {"jev", "openai", "decision_agent", "reply_agent"}
-    assert JevConfig.model_validate(raw["jev"]).model == "jev-1"
-    assert OpenAIConfig.model_validate(raw["openai"]).timeout_seconds == 30.0
-
-    dec_cfg = DecisionAgentConfig.model_validate(raw["decision_agent"])
-    rep_cfg = ReplyAgentConfig.model_validate(raw["reply_agent"])
-    assert isinstance(dec_cfg, BaseAgentConfig)
-    assert isinstance(rep_cfg, BaseAgentConfig)
-    assert dec_cfg.temperature == 0.0
-    assert dec_cfg.reasoning_effort == "low"
-    assert rep_cfg.temperature == 0.7
-    assert rep_cfg.max_turns == 2
+    cfg = Config.model_validate(store.raw_data())
+    assert cfg.jev_model == "jev-1"
+    assert cfg.model == "gpt-5-mini"
+    assert cfg.reasoning_effort == "low"
+    assert cfg.timeout_seconds == 30.0
 
     assert qq_admin.__plugin_meta__.type == "application"
     assert qq_admin.__plugin_meta__.supported_adapters == {"qq"}

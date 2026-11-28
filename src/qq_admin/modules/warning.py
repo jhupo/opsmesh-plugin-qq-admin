@@ -4,7 +4,7 @@ import time
 
 from pydantic import BaseModel, Field
 
-from qq_admin.config import ConfigStore, parse_field_value
+from qq_admin.store import ConfigStore, parse_field_value
 
 
 class WarningConfig(BaseModel):

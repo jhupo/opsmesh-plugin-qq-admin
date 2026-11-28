@@ -15,7 +15,7 @@ from openai.types.shared import Reasoning
 from pydantic import BaseModel, Field
 from qq import Gateway
 
-from qq_admin.config import DecisionAgentConfig
+from qq_admin.config import Config
 
 from .guardrails import injection_guardrail
 from .tools import GROUP_ADMIN_TOOLS
@@ -61,7 +61,7 @@ class DecisionAgent:
 
     def __init__(
         self,
-        config: DecisionAgentConfig,
+        config: Config,
         *,
         client: AsyncOpenAI | None = None,
     ) -> None:
@@ -78,7 +78,7 @@ class DecisionAgent:
             if self.config.reasoning_effort
             else None
         )
-        return ModelSettings(temperature=self.config.temperature, reasoning=reasoning)
+        return ModelSettings(temperature=0.0, reasoning=reasoning)
 
     async def execute(self, prompt: str, *, context: TurnContext) -> DecisionOutcome:
         """Execute one stateless moderation decision turn via Responses API."""
@@ -122,7 +122,7 @@ class DecisionAgent:
                 agent,
                 input=prompt,
                 context=context,
-                max_turns=self.config.max_turns,
+                max_turns=6,
             )
         except InputGuardrailTripwireTriggered:
             return DecisionOutcome(

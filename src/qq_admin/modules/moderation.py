@@ -10,8 +10,8 @@ from pydantic import BaseModel, Field
 from qq import Gateway, SetMemberMuteState
 from typesafe_sdk import Choice, Image, Noul, Score
 
-from qq_admin.config import ConfigStore, parse_field_value
 from qq_admin.models import DecisionOutcome, ReplySpec, TurnContext
+from qq_admin.store import ConfigStore, parse_field_value
 
 from .audit import AuditRecord
 from .duration import format_duration, parse_duration

@@ -14,7 +14,7 @@ from agents import (
 from openai import AsyncOpenAI
 from openai.types.shared import Reasoning
 
-from qq_admin.config import ReplyAgentConfig
+from qq_admin.config import Config
 
 from .guardrails import reply_guardrail
 
@@ -43,7 +43,7 @@ class ReplyAgent:
 
     def __init__(
         self,
-        config: ReplyAgentConfig,
+        config: Config,
         *,
         client: AsyncOpenAI | None = None,
     ) -> None:
@@ -60,7 +60,7 @@ class ReplyAgent:
             if self.config.reasoning_effort
             else None
         )
-        return ModelSettings(temperature=self.config.temperature, reasoning=reasoning)
+        return ModelSettings(temperature=0.7, reasoning=reasoning)
 
     async def execute(self, spec: ReplySpec) -> str:
         """Generate one natural group admin reply via Responses API."""
@@ -70,7 +70,7 @@ class ReplyAgent:
         sg_cfg = spec.manager.safeguard.config(spec.group_id)
         daily = spec.manager.safeguard.daily_counts(spec.group_id)
         catalog = spec.manager.catalog
-        persona = self.config.persona.strip() or catalog.composer_persona()
+        persona = catalog.composer_persona()
         instructions = catalog.composer_instructions(
             persona=persona,
             group_id=spec.group_id,
@@ -105,7 +105,7 @@ class ReplyAgent:
                 agent,
                 input=json.dumps(payload, ensure_ascii=False),
                 context=spec,
-                max_turns=self.config.max_turns,
+                max_turns=2,
             )
             text = str(result.final_output or "").strip()
             return text or spec.fallback

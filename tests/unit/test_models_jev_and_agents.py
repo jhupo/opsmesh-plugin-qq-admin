@@ -7,10 +7,8 @@ from agents import RunContextWrapper, Runner
 import pytest
 
 from qq_admin import (
-    DecisionAgentConfig,
+    Config,
     DecisionOutcome,
-    JevConfig,
-    ReplyAgentConfig,
     ReplySpec,
     ServiceManager,
     TurnContext,
@@ -56,9 +54,7 @@ async def test_jev_execute_and_moderation_assessment() -> None:
     )
     fake_client.aclose = AsyncMock()
 
-    manager = ServiceManager(
-        jev_config=JevConfig(model="jev-1"), jev_client=fake_client
-    )
+    manager = ServiceManager(Config(jev_model="jev-1"), jev_client=fake_client)
     assessment = await manager.moderation.assess(
         "G1", "U1", "buy cheap promo", images=[b"fake-png-bytes"]
     )
@@ -88,8 +84,7 @@ async def test_stateless_decision_and_reply_agents_with_guardrails(
     fake_openai.close = AsyncMock()
 
     manager = ServiceManager(
-        decision_config=DecisionAgentConfig(model="gpt-5-mini", reasoning_effort="low"),
-        reply_config=ReplyAgentConfig(model="gpt-5-mini", reasoning_effort="minimal"),
+        Config(model="gpt-5-mini", reasoning_effort="low"),
         jev_client=fake_jev,
         openai_client=fake_openai,
     )
@@ -145,7 +140,7 @@ async def test_stateless_decision_and_reply_agents_with_guardrails(
         )
     )
     assert "Muted U1" in reply
-    assert captured_agents[-1].model_settings.reasoning.effort == "minimal"
+    assert captured_agents[-1].model_settings.reasoning.effort == "low"
 
     # Guardrails
     fake_jev.system_one = AsyncMock(return_value=_mock_jev_resp(nouls={"answer": 0.95}))

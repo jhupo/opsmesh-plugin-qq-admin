@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Literal
 from pydantic import BaseModel, Field
 from qq import Gateway, JoinRequest
 
-from qq_admin.config import ConfigStore, parse_field_value
+from qq_admin.store import ConfigStore, parse_field_value
 
 from .audit import AuditRecord
 from .moderation import ActionOutcome

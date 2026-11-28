@@ -9,14 +9,10 @@ from qq import Gateway as _QQGateway
 from typesafe_sdk import AsyncTypeSafeClient as _AsyncTypeSafeClient
 
 from .config import Config as _Config
-from .config import ConfigStore as _ConfigStore
-from .config import DecisionAgentConfig as _DecisionAgentConfig
-from .config import JevConfig as _JevConfig
-from .config import OpenAIConfig as _OpenAIConfig
-from .config import ReplyAgentConfig as _ReplyAgentConfig
 from .manager import ServiceManager as _ServiceManager
 from .manager import get_manager as _get_manager
 from .manager import set_manager as _set_manager
+from .store import ConfigStore as _ConfigStore
 
 try:
     __version__: str | None = version("opsmesh-plugin-qq-admin")
@@ -46,49 +42,29 @@ def _qq_gateways() -> list[_QQGateway]:
 
 
 def configure(
+    config: _Config | None = None,
     *,
-    jev_config: _JevConfig | None = None,
-    openai_config: _OpenAIConfig | None = None,
-    decision_config: _DecisionAgentConfig | None = None,
-    reply_config: _ReplyAgentConfig | None = None,
     store: _ConfigStore | None = None,
-    prompts_path: str | None = None,
     jev_client: _AsyncTypeSafeClient | None = None,
     openai_client: _AsyncOpenAI | None = None,
 ) -> _ServiceManager:
     """Initialize or replace the active ServiceManager with injectable SDK clients."""
-    if (
-        jev_config is None
-        and openai_config is None
-        and decision_config is None
-        and reply_config is None
-        and store is None
-    ):
+    cfg = config
+    if cfg is None:
         try:
-            plugin_cfg = get_plugin_config(_Config)
-            (
-                jev_config,
-                openai_config,
-                decision_config,
-                reply_config,
-                store,
-            ) = plugin_cfg.build_store()
-            prompts_path = prompts_path or plugin_cfg.qq_admin_prompts or None
+            cfg = get_plugin_config(_Config)
         except ValueError:
-            jev_config = _JevConfig()
-            openai_config = _OpenAIConfig()
-            decision_config = _DecisionAgentConfig()
-            reply_config = _ReplyAgentConfig()
-            store = _ConfigStore()
+            cfg = _Config()
+
+    if cfg.config_path.strip() and store is None:
+        store = _ConfigStore.from_toml(cfg.config_path)
+        raw = store.raw_data()
+        cfg = _Config.model_validate({**cfg.model_dump(), **raw})
 
     return _set_manager(
         _ServiceManager(
-            jev_config=jev_config,
-            openai_config=openai_config,
-            decision_config=decision_config,
-            reply_config=reply_config,
+            cfg,
             store=store,
-            prompts_path=prompts_path,
             jev_client=jev_client,
             openai_client=openai_client,
         )
@@ -119,14 +95,8 @@ else:
         await _active.shutdown()
 
 
-from .config import BaseAgentConfig as BaseAgentConfig
 from .config import Config as Config
-from .config import ConfigStore as ConfigStore
-from .config import DecisionAgentConfig as DecisionAgentConfig
-from .config import JevConfig as JevConfig
-from .config import OpenAIConfig as OpenAIConfig
 from .config import ReasoningEffort as ReasoningEffort
-from .config import ReplyAgentConfig as ReplyAgentConfig
 from .exception import BotNotAdminError as BotNotAdminError
 from .exception import ConfigError as ConfigError
 from .exception import PermissionDeniedError as PermissionDeniedError
@@ -177,3 +147,4 @@ from .modules import parse_duration as parse_duration
 from .resources import DEFAULT_CONFIG_PATH as DEFAULT_CONFIG_PATH
 from .resources import DEFAULT_PROMPTS_PATH as DEFAULT_PROMPTS_PATH
 from .resources import PromptCatalog as PromptCatalog
+from .store import ConfigStore as ConfigStore
