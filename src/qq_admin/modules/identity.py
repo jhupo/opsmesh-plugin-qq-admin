@@ -1,20 +1,22 @@
-"""Identity and admin check module with self-owned IdentityConfig."""
+"""Multi-group & multi-bot identity cache, admin checks, and OpsMesh Permission."""
 
 from dataclasses import dataclass
 import time
 from typing import Literal
 
+from opsmesh.permission import Permission
 from pydantic import BaseModel, Field
-from qq import Gateway
+from qq import Gateway, GroupMessageEvent
 
+from qq_admin.exception import ConfigError
 from qq_admin.store import CONFIG_STORE, ConfigStore, parse_field_value
 
 
 class IdentityConfig(BaseModel):
-    """Role cache TTLs and configured global admin allowlist."""
+    """Role cache TTLs and configured admin allowlist."""
 
     admins: list[str] = Field(
-        default_factory=list, description="Global admin member_openid allowlist."
+        default_factory=list, description="Admin member_openid allowlist."
     )
     deny_response: Literal["silent", "reply"] = Field(
         default="silent",
@@ -38,13 +40,18 @@ class PermissionTrace:
     reason: str
 
 
+def _bot_cache_key(gateway: Gateway, group_id: str) -> tuple[str, str]:
+    bot_id = str(getattr(gateway, "self_id", "") or "default")
+    return (bot_id, group_id)
+
+
 class IdentityModule:
-    """Caches bot/member roles and answers one question: is this user an admin?"""
+    """Caches bot/member roles across bots & groups and checks admin privileges."""
 
     def __init__(self, store: ConfigStore) -> None:
         self._store = store
         self._role_cache: dict[tuple[str, str], tuple[str, float]] = {}
-        self._bot_role_cache: dict[str, tuple[str, float]] = {}
+        self._bot_role_cache: dict[tuple[str, str], tuple[str, float]] = {}
 
     def config(self, group_id: str | None = None) -> IdentityConfig:
         raw = self._store.load_section("identity", group_id=group_id)
@@ -56,20 +63,36 @@ class IdentityModule:
         current = self.config(group_id).model_dump()
         current[key] = parse_field_value(IdentityConfig, key, raw_value)
         validated = IdentityConfig.model_validate(current)
-        self._store.save_section("identity", validated.model_dump(), group_id=group_id)
+        self._store.save_section(
+            "identity",
+            validated.model_dump(),
+            group_id=group_id,
+            defaults=IdentityConfig().model_dump(),
+        )
         return validated
+
+    def reset_config(self, group_id: str, key: str | None = None) -> IdentityConfig:
+        if key and key not in IdentityConfig.model_fields:
+            raise ConfigError(f"Unknown config field: {key}")
+        self._store.reset_section("identity", key, group_id=group_id)
+        return self.config(group_id)
 
     @staticmethod
     def _normalize_role(raw_role: object) -> str:
         role = str(raw_role or "member").strip().lower()
         return role if role in {"owner", "admin", "member"} else "member"
 
+    def is_global_admin(self, member_id: str) -> bool:
+        """Return True when member_id is registered in the global admins list."""
+        return member_id in self.config(None).admins
+
     async def bot_role(
         self, gateway: Gateway, group_id: str, *, force: bool = False
     ) -> str:
         cfg = self.config(group_id)
         now = time.monotonic()
-        cached = self._bot_role_cache.get(group_id)
+        cache_key = _bot_cache_key(gateway, group_id)
+        cached = self._bot_role_cache.get(cache_key)
         if not force and cached and (now - cached[1]) < cfg.bot_role_refresh_seconds:
             return cached[0]
 
@@ -78,7 +101,7 @@ class IdentityModule:
             role = self._normalize_role(state.member_role)
         except Exception:
             role = cached[0] if cached else "member"
-        self._bot_role_cache[group_id] = (role, now)
+        self._bot_role_cache[cache_key] = (role, now)
         return role
 
     async def member_role(
@@ -110,7 +133,8 @@ class IdentityModule:
         self._role_cache.pop((group_id, member_id), None)
 
     def forget_group(self, group_id: str) -> None:
-        self._bot_role_cache.pop(group_id, None)
+        for key in [k for k in self._bot_role_cache if k[1] == group_id]:
+            self._bot_role_cache.pop(key, None)
         for key in [k for k in self._role_cache if k[0] == group_id]:
             self._role_cache.pop(key, None)
 
@@ -122,8 +146,8 @@ class IdentityModule:
         *,
         force: bool = False,
     ) -> bool:
-        """Return True if member_id is a global admin, group owner, or group admin."""
-        if member_id in self.config(group_id).admins:
+        """Return True if member_id is a global admin or target-group owner/admin."""
+        if self.is_global_admin(member_id) or member_id in self.config(group_id).admins:
             return True
         role = await self.member_role(gateway, group_id, member_id, force=force)
         return role in {"owner", "admin"}
@@ -136,15 +160,20 @@ class IdentityModule:
         *,
         force: bool = False,
     ) -> PermissionTrace:
-        """Return a diagnostic trace of a member's admin status."""
-        is_global = member_id in self.config(group_id).admins
+        """Return a diagnostic trace of a member's admin status in target group."""
+        is_global = self.is_global_admin(member_id)
+        in_group_allowlist = member_id in self.config(group_id).admins
         b_role = await self.bot_role(gateway, group_id, force=force)
         m_role = await self.member_role(gateway, group_id, member_id, force=force)
-        allowed = is_global or m_role in {"owner", "admin"}
+        allowed = is_global or in_group_allowlist or m_role in {"owner", "admin"}
         reason = (
             "global admin"
             if is_global
-            else (f"group {m_role}" if allowed else "regular member")
+            else (
+                "group allowlist admin"
+                if in_group_allowlist
+                else (f"group {m_role}" if allowed else "regular member")
+            )
         )
         return PermissionTrace(
             member_id=member_id,
@@ -163,4 +192,26 @@ class IdentityModule:
 
 IDENTITY = IdentityModule(CONFIG_STORE)
 
-__all__ = ["IDENTITY", "IdentityConfig", "IdentityModule", "PermissionTrace"]
+
+class GroupAdmin:
+    """OpsMesh Permission checker matching global admins and group owners/admins."""
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        return "GroupAdmin()"
+
+    async def __call__(self, gateway: Gateway, event: GroupMessageEvent) -> bool:
+        return await IDENTITY.is_admin(gateway, event.group_openid, event.get_user_id())
+
+
+GROUP_ADMIN: Permission = Permission(GroupAdmin())
+
+__all__ = [
+    "GROUP_ADMIN",
+    "IDENTITY",
+    "GroupAdmin",
+    "IdentityConfig",
+    "IdentityModule",
+    "PermissionTrace",
+]

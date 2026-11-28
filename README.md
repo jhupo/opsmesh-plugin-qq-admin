@@ -1,30 +1,29 @@
 # opsmesh-plugin-qq-admin
 
-Automatic Official QQ Bot v2 group administration plugin for [OpsMesh](https://github.com/jhupo/OpsMesh), built on **TypeSafe AI Jev** (`typesafe-sdk`) and **dual OpenAI Agents SDK** (`DecisionAgent` + `ReplyAgent`) with **module-owned online configuration**.
+Automatic Official QQ Bot v2 multi-group administration plugin for [OpsMesh](https://github.com/jhupo/OpsMesh), built around a **deterministic moderation planner + TypeSafe AI Jev (`Jev.execute`) + persona `ReplyAgent`**, target-group admin authorization, and direct global module singletons for downstream Agent/chat plugins.
 
 ## Architecture
 
-- **Minimal Flat Config ([config.py](src/qq_admin/config.py))**: One flat `Config` (`jev_api_key`, `jev_model`, `openai_api_key`, `openai_base_url`, `model`, `reasoning_effort`, `max_turns`, `timeout_seconds`, `config_path`). Every feature module owns its own defaults and persists per-group overrides via `ConfigStore` only when customized online via `/admin`.
+- **Minimal Flat Config ([config.py](src/qq_admin/config.py))**: One flat `Config` (`jev_api_key`, `jev_model`, `openai_api_key`, `openai_base_url`, `model`, `reasoning_effort`, `timeout_seconds`, `default_group_enabled`, `config_path`).
+- **Multi-Group Diff Overrides ([store.py](src/qq_admin/store.py))**: `CONFIG_STORE = ConfigStore()` persists global defaults merged with diff-only per-group overrides under `[groups."<group_openid>"]` via atomic file writes.
 - **Dedicated Prompts Folder (`src/qq_admin/prompts/`)**:
-  - Markdown role templates (`reply_agent.md`, `decision_auto.md`, `decision_admin.md`) for dynamic, non-repetitive replies and moderation decisions.
-  - `jev.toml` (11 fixed safety categories + severity), `jev_guards.toml` (join-request risk + optional tool judge), and `notices.toml` (fallback notices when LLM is unavailable).
+  - `reply_agent.md`: Mature group-admin persona Markdown template rendered only when moderation or action replies are needed.
+  - `jev.toml`: 11 fixed safety categories (`violence`, `sexual_content`, `suicide_self_harm`, `political_sensitive`, `jailbreak`, `non_violent_crime`, `pii`, `unethical_behavior`, `copyright_infringement`, `advertising`, `prompt_injection`) + `severity` (0–4) + join-request review instructions.
+  - `notices.toml`: Deterministic ops console templates and 0ms output guardrail patterns.
 - **Stateless Model Runners (`src/qq_admin/models/`)**:
-  - `Jev.execute(text=..., images=..., urls=...) -> SafetyReport`: stateless TypeSafe Jev classifier with fixed questions returning typed risk scores.
-  - `DecisionAgent.execute(prompt, context=...)`: stateless tool-calling moderation decision agent (`temperature=0.0`).
-  - `ReplyAgent.execute(spec)`: stateless persona-driven reply composer (`temperature=0.7`) with hallucination/safety guardrails.
-- **Self-Contained Feature Modules (`src/qq_admin/modules/`)**:
-  - `identity` (`IdentityConfig` + `IdentityModule`): Bot/member role cache, authorization, `/admin perm` trace.
-  - `safeguard` (`SafeguardConfig` + `SafeguardModule`): Role-aware 8-step safety guardrails (bypassed when Bot is group owner).
-  - `warning` (`WarningConfig` + `WarningModule`): Sliding-window categorized warnings (`spam`/`abuse`/`ad`).
-  - `escalation` (`EscalationConfig` + `EscalationModule`): Progressive punishment ladder (`mute` → `kick/ban`).
-  - `audit` (`AuditConfig` + `AuditModule`): Per-group moderation & lifecycle audit logs.
-  - `moderation` (`ModerationConfig` + `ModerationModule`): Jev → DecisionAgent → ReplyAgent pipeline and QQ v2 actions.
-  - `approval` (`ApprovalConfig` + `ApprovalModule`): Join-request risk review (`risk_tips` + Jev) and background polling.
+  - `Jev.execute(text=..., images=..., urls=...) -> SafetyReport`: stateless multimodal risk classifier.
+  - `ReplyAgent.execute(spec)`: stateless OpenAI Responses API reply composer guarded by pure-code anti-hallucination checks (`reply_guardrail`).
 - **Direct Global Module Singletons (`src/qq_admin/modules/`)**:
-  - `IDENTITY`, `SAFEGUARD`, `WARNING`, `ESCALATION`, `AUDIT`, `MODERATION`, `APPROVAL` are exported directly as global singletons backed by `CONFIG_STORE`, while `MANAGER = ServiceManager()` holds the shared `Jev` / `DecisionAgent` / `ReplyAgent` runtime.
-- **Direct Entrypoints**:
-  - `commands/` (`admin.py`, `actions.py`, `queries.py`): Directly registered OpsMesh slash commands.
-  - `messages/` (`group_message.py`, `group_events.py`): Group message & lifecycle entries (`GroupJoinRequestEvent`, `GroupMemberAddEvent`, `GroupMemberRemoveEvent`, `GroupAddRobotEvent`, `GroupDelRobotEvent`).
+  - `IDENTITY` & `GROUP_ADMIN`: Multi-bot `(self_id, group_id)` role cache, target-group admin authorization, and OpsMesh `Permission`.
+  - `SAFEGUARD`: Role-aware 8-step safety guardrails (bypassed when Bot is group owner).
+  - `WARNING`: Sliding-window categorized warnings (`spam`/`abuse`/`ad`) with automatic mute upgrade.
+  - `ESCALATION`: Progressive punishment ladder (`mute` -> `kick` + `blacklist`).
+  - `AUDIT`: Per-group isolated ring-buffer audit logs.
+  - `MODERATION`: Fixed deterministic moderation pipeline (whitelist/empty/trusted-URL short-circuit -> flood/repeat rate limiter -> `Jev` -> deterministic action -> `ReplyAgent`) and target-authorized QQ v2 management methods.
+  - `APPROVAL`: Event-driven `GroupJoinRequestEvent` review with pre-Jev quota/whitelist short-circuits.
+- **Downstream Plugin Interoperability**:
+  - Admin messages and normal chat pass silently (`block=False`) to downstream context-aware chat/Agent plugins, while prompt injections and violations are blocked upstream (`stop_propagation()`).
+  - Downstream plugins import `MODERATION`, `APPROVAL`, `IDENTITY`, `GROUP_ADMIN`, `SAFEGUARD`, `AUDIT` directly — every write method enforces target-group `IDENTITY.is_admin` when `operator_id != "bot"`.
 
 ## Quick Start
 
@@ -38,11 +37,13 @@ opsmesh.load_plugin("qq_admin")
 opsmesh.run()
 ```
 
-Enable group moderation online in any group (by group owner or configured global admin):
+Enable and customize per-group moderation online:
 
 ```text
 /admin on
+/admin groups
 /admin config set safeguard.max_mute_duration 1800
+/admin config reset safeguard.max_mute_duration
 /admin status
 ```
 

@@ -1,4 +1,4 @@
-"""System 2 Agent 2: ReplyAgent rendering prompts/reply_agent.md via Responses API."""
+"""Stateless ReplyAgent rendering prompts/reply_agent.md via OpenAI Responses API."""
 
 from dataclasses import dataclass, field
 import json
@@ -17,7 +17,7 @@ from openai.types.shared import Reasoning
 from qq_admin.config import Config
 from qq_admin.prompts import load_md
 
-from .guardrails import reply_guardrail
+from .guardrails import reply_guardrail, sanitize_reply_text
 
 
 @dataclass(slots=True)
@@ -62,9 +62,11 @@ class ReplyAgent:
         if self._client is None:
             return spec.fallback
 
+        from qq_admin.modules.moderation import MODERATION
         from qq_admin.modules.safeguard import SAFEGUARD
 
         sg_cfg = SAFEGUARD.config(spec.group_id)
+        mod_cfg = MODERATION.config(spec.group_id)
         daily = SAFEGUARD.daily_counts(spec.group_id)
         instructions = load_md(
             "reply_agent.md",
@@ -79,6 +81,7 @@ class ReplyAgent:
             mute_limit=sg_cfg.daily_mute_limit,
             kick_count=daily["kick"],
             kick_limit=sg_cfg.daily_kick_limit,
+            group_rule_hint=mod_cfg.group_rule_hint.strip() or "-",
         )
 
         agent = Agent[ReplySpec](
@@ -102,9 +105,9 @@ class ReplyAgent:
                 agent,
                 input=json.dumps(payload, ensure_ascii=False),
                 context=spec,
-                max_turns=self.config.max_turns,
+                max_turns=2,
             )
-            text = str(result.final_output or "").strip()
+            text = sanitize_reply_text(str(result.final_output or ""))
             return text or spec.fallback
         except OutputGuardrailTripwireTriggered:
             return spec.fallback

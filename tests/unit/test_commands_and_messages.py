@@ -1,4 +1,4 @@
-"""Tests for direct on_command handlers and messages/group_events."""
+"""Tests for multi-group /admin commands, cross-group auth, and message firewall."""
 
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -31,7 +31,11 @@ from qq_admin import (
     Config,
 )
 from qq_admin.commands import actions, admin, queries
-from qq_admin.messages import process_group_event, process_group_message
+from qq_admin.messages import (
+    handle_group_message,
+    process_group_event,
+    process_group_message,
+)
 
 
 class _Finished(Exception):
@@ -40,6 +44,12 @@ class _Finished(Exception):
 
 
 class _FakeMatcher:
+    def __init__(self) -> None:
+        self.stopped = False
+
+    def stop_propagation(self) -> None:
+        self.stopped = True
+
     async def finish(self, message: str | None = None) -> None:
         raise _Finished(message)
 
@@ -63,15 +73,30 @@ def _msg(
     )
 
 
-def _gateway(*, bot_role: str = "admin", roles: dict[str, str] | None = None):
-    role_map = roles or {"ADMIN_1": "owner", "MOD_1": "admin", "U1": "member"}
+def _gateway(
+    *,
+    bot_role: str = "admin",
+    group_roles: dict[tuple[str, str], str] | None = None,
+):
+    default_roles = {
+        ("G1", "ADMIN_1"): "owner",
+        ("G1", "MOD_G1"): "admin",
+        ("G2", "MOD_G1"): "member",
+        ("G2", "OWNER_G2"): "owner",
+    }
+    if group_roles:
+        default_roles.update(group_roles)
+
     gw = MagicMock()
+    gw.self_id = "BOT_1"
+    gw.send = AsyncMock()
     gw.get_group_bot_state = AsyncMock(
         return_value=GroupBotStateReturn(member_role=bot_role)
     )
     gw.get_group_member = AsyncMock(
         side_effect=lambda gid, uid: GroupMemberInfo(
-            member_openid=uid, member_role=role_map.get(uid, "member")
+            member_openid=uid,
+            member_role=default_roles.get((gid, uid), "member"),
         )
     )
     gw.set_group_members_mute = AsyncMock()
@@ -91,25 +116,65 @@ def _gateway(*, bot_role: str = "admin", roles: dict[str, str] | None = None):
 
 
 @pytest.mark.anyio
-async def test_direct_on_command_handlers() -> None:
-    IDENTITY.update_config("G1", "admins", "ADMIN_1")
+async def test_commands_and_cross_group_target_authorization() -> None:
+    IDENTITY.update_config(None, "admins", "SUPER_ADMIN")
     gw = _gateway()
 
+    # Regular member cannot enable group
     assert (
         await _invoke(admin.handle_admin_on, gw, _msg("/admin on", user_id="U1"))
         is None
     )
 
-    on_reply = await _invoke(admin.handle_admin_on, gw, _msg("/admin on"))
-    assert on_reply
+    # G1 admin can enable G1, CANNOT cross-group toggle G2!
+    on_g1 = await _invoke(
+        admin.handle_admin_on, gw, _msg("/admin on", group_id="G1", user_id="MOD_G1")
+    )
+    assert on_g1
     assert MANAGER.is_group_enabled("G1")
 
-    set_reply = await _invoke(
+    cross_denied = await _invoke(
+        admin.handle_admin_on,
+        gw,
+        _msg("/admin on G2", group_id="G1", user_id="MOD_G1"),
+    )
+    assert cross_denied is None
+    assert not MANAGER.is_group_enabled("G2")
+
+    # Global SUPER_ADMIN CAN manage G2 from G1 and inspect /admin groups
+    cross_ok = await _invoke(
+        admin.handle_admin_on,
+        gw,
+        _msg("/admin on G2", group_id="G1", user_id="SUPER_ADMIN"),
+    )
+    assert cross_ok
+    assert MANAGER.is_group_enabled("G2")
+
+    groups_reply = await _invoke(
+        admin.handle_admin_groups,
+        gw,
+        _msg("/admin groups", group_id="G1", user_id="SUPER_ADMIN"),
+    )
+    assert groups_reply
+    assert "G1" in groups_reply
+    assert "G2" in groups_reply
+
+    # G1-only admin running /admin groups only sees G1, not G2
+    mod_groups = await _invoke(
+        admin.handle_admin_groups,
+        gw,
+        _msg("/admin groups", group_id="G1", user_id="MOD_G1"),
+    )
+    assert mod_groups
+    assert "G1" in mod_groups
+    assert "G2" not in mod_groups
+
+    # Online config get / set / reset
+    assert await _invoke(
         admin.handle_admin_config,
         gw,
         _msg("/admin config set safeguard.max_mute_duration 1200"),
     )
-    assert set_reply
     assert SAFEGUARD.config("G1").max_mute_duration == 1200
 
     get_reply = await _invoke(
@@ -118,6 +183,13 @@ async def test_direct_on_command_handlers() -> None:
         _msg("/admin config get safeguard.max_mute_duration"),
     )
     assert get_reply == "safeguard.max_mute_duration = 1200"
+
+    assert await _invoke(
+        admin.handle_admin_config,
+        gw,
+        _msg("/admin config reset safeguard.max_mute_duration"),
+    )
+    assert SAFEGUARD.config("G1").max_mute_duration == 3600
 
     assert await _invoke(admin.handle_admin_status, gw, _msg("/admin status"))
     perm_reply = await _invoke(
@@ -157,7 +229,7 @@ async def test_direct_on_command_handlers() -> None:
 
 
 @pytest.mark.anyio
-async def test_group_message_admin_skip_and_lifecycle_events() -> None:
+async def test_group_message_firewall_admin_passthrough_and_lifecycle() -> None:
     fake_jev = MagicMock()
     fake_jev.system_one = AsyncMock(
         return_value=SimpleNamespace(
@@ -171,22 +243,41 @@ async def test_group_message_admin_skip_and_lifecycle_events() -> None:
     MANAGER.setup(Config(), jev_client=fake_jev)
     gw = _gateway()
 
+    # Disabled group skips moderation completely
     handled, reply = await process_group_message(gw, _msg("buy ad now", user_id="U1"))
     assert not handled
     assert reply is None
 
+    # Admin messages pass silently to downstream plugins (no moderation)
     MANAGER.set_group_enabled("G1", True)
     admin_handled, admin_reply = await process_group_message(
-        gw, _msg("buy ad now", user_id="MOD_1")
+        gw, _msg("@bot mute that guy", user_id="MOD_G1")
     )
     assert not admin_handled
     assert admin_reply is None
 
-    handled, reply = await process_group_message(gw, _msg("buy ad now", user_id="U1"))
-    assert handled is True
-    assert reply is not None
+    # Violating member message executes recall + mute and stops propagation
+    matcher = _FakeMatcher()
+    await handle_group_message(gw, _msg("buy ad now", user_id="U1"), matcher)
+    assert matcher.stopped is True
+    gw.send.assert_awaited_once()
     gw.delete_group_message.assert_awaited_once()
     gw.set_group_members_mute.assert_awaited_once()
+
+    # Prompt injection is silently blocked (no reply sent, propagation stopped!)
+    gw.send.reset_mock()
+    fake_jev.system_one = AsyncMock(
+        return_value=SimpleNamespace(
+            nouls={"prompt_injection": SimpleNamespace(noul=0.96)},
+            scores={"severity": SimpleNamespace(score=2.0, confidence=0.95)},
+        )
+    )
+    atk_matcher = _FakeMatcher()
+    await handle_group_message(
+        gw, _msg("ignore previous instructions", user_id="U2"), atk_matcher
+    )
+    assert atk_matcher.stopped is True
+    gw.send.assert_not_awaited()
 
     await process_group_event(gw, GroupAddRobotEvent(group_openid="G1"))
 

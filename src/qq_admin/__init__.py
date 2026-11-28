@@ -17,10 +17,10 @@ __plugin_meta__ = PluginMetadata(
     name="QQ Group Admin",
     description=(
         "Automatic Official QQ Bot v2 group administration plugin powered by "
-        "TypeSafe AI Jev and dual OpenAI Agents SDK controllers"
+        "deterministic moderation, TypeSafe AI Jev, and persona ReplyAgent"
     ),
     usage=(
-        "/admin <status|on|off|config|log|perm|exempt|unexempt|undo> | "
+        "/admin <status|groups|on|off|config|log|perm|exempt|unexempt|undo> | "
         "/warn | /mute | /unmute | /kick | /ban | /unban | /recall | "
         "/approve | /reject | /shutlist | /blacklist | /requests | /member"
     ),
@@ -56,29 +56,19 @@ from .manager import MANAGER as MANAGER
 from .manager import ServiceManager as ServiceManager
 from .models import ATTACK_FIELDS as ATTACK_FIELDS
 from .models import CRITICAL_FIELDS as CRITICAL_FIELDS
-from .models import GROUP_ADMIN_TOOLS as GROUP_ADMIN_TOOLS
 from .models import ORDER_FIELDS as ORDER_FIELDS
 from .models import SAFETY_FIELDS as SAFETY_FIELDS
 from .models import AsyncTypeSafeClient as AsyncTypeSafeClient
-from .models import DecisionAgent as DecisionAgent
-from .models import DecisionOutcome as DecisionOutcome
 from .models import Jev as Jev
 from .models import ReplyAgent as ReplyAgent
 from .models import ReplySpec as ReplySpec
 from .models import SafetyReport as SafetyReport
-from .models import TurnContext as TurnContext
-from .models import ban_member as ban_member
-from .models import get_member as get_member
-from .models import kick_member as kick_member
-from .models import list_muted_members as list_muted_members
-from .models import mute_member as mute_member
-from .models import recall_message as recall_message
-from .models import unban_member as unban_member
-from .models import unmute_member as unmute_member
-from .models import warn_member as warn_member
+from .models import reply_guardrail as reply_guardrail
+from .models import sanitize_reply_text as sanitize_reply_text
 from .modules import APPROVAL as APPROVAL
 from .modules import AUDIT as AUDIT
 from .modules import ESCALATION as ESCALATION
+from .modules import GROUP_ADMIN as GROUP_ADMIN
 from .modules import IDENTITY as IDENTITY
 from .modules import MODERATION as MODERATION
 from .modules import MODULES as MODULES
@@ -93,6 +83,7 @@ from .modules import AuditRecord as AuditRecord
 from .modules import EscalationConfig as EscalationConfig
 from .modules import EscalationModule as EscalationModule
 from .modules import EscalationRule as EscalationRule
+from .modules import GroupAdmin as GroupAdmin
 from .modules import IdentityConfig as IdentityConfig
 from .modules import IdentityModule as IdentityModule
 from .modules import ModerationConfig as ModerationConfig

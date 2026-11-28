@@ -1,4 +1,4 @@
-"""Audit logging module with self-owned AuditConfig."""
+"""Audit logging module with per-group ring buffers and self-owned AuditConfig."""
 
 from collections import deque
 from dataclasses import dataclass, field
@@ -6,14 +6,15 @@ import time
 
 from pydantic import BaseModel, Field
 
+from qq_admin.exception import ConfigError
 from qq_admin.store import CONFIG_STORE, ConfigStore, parse_field_value
 
 
 class AuditConfig(BaseModel):
-    """In-memory audit log retention settings."""
+    """Per-group in-memory audit log retention settings."""
 
     enabled: bool = Field(default=True, description="Enable audit log recording.")
-    max_entries: int = Field(default=2000, ge=100)
+    max_entries: int = Field(default=500, ge=50)
     default_lines: int = Field(default=10, ge=1, le=100)
 
 
@@ -31,7 +32,7 @@ class AuditRecord:
 
 
 class AuditModule:
-    """Records and queries per-group moderation audit entries."""
+    """Records and queries isolated per-group moderation audit entries."""
 
     def __init__(self, store: ConfigStore) -> None:
         self._store = store
@@ -47,8 +48,19 @@ class AuditModule:
         current = self.config(group_id).model_dump()
         current[key] = parse_field_value(AuditConfig, key, raw_value)
         validated = AuditConfig.model_validate(current)
-        self._store.save_section("audit", validated.model_dump(), group_id=group_id)
+        self._store.save_section(
+            "audit",
+            validated.model_dump(),
+            group_id=group_id,
+            defaults=AuditConfig().model_dump(),
+        )
         return validated
+
+    def reset_config(self, group_id: str, key: str | None = None) -> AuditConfig:
+        if key and key not in AuditConfig.model_fields:
+            raise ConfigError(f"Unknown config field: {key}")
+        self._store.reset_section("audit", key, group_id=group_id)
+        return self.config(group_id)
 
     def record(self, entry: AuditRecord) -> None:
         cfg = self.config(entry.group_id)

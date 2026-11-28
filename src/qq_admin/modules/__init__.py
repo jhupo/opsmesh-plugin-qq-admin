@@ -8,7 +8,14 @@ from .approval import APPROVAL, ApprovalConfig, ApprovalModule
 from .audit import AUDIT, AuditConfig, AuditModule, AuditRecord
 from .duration import MuteDuration, format_duration, parse_duration
 from .escalation import ESCALATION, EscalationConfig, EscalationModule, EscalationRule
-from .identity import IDENTITY, IdentityConfig, IdentityModule, PermissionTrace
+from .identity import (
+    GROUP_ADMIN,
+    IDENTITY,
+    GroupAdmin,
+    IdentityConfig,
+    IdentityModule,
+    PermissionTrace,
+)
 from .moderation import (
     MODERATION,
     ActionOutcome,
@@ -45,12 +52,14 @@ def reset_modules() -> None:
     AUDIT.clear()
     WARNING.clear()
     SAFEGUARD.clear()
+    MODERATION.clear()
 
 
 __all__ = [
     "APPROVAL",
     "AUDIT",
     "ESCALATION",
+    "GROUP_ADMIN",
     "IDENTITY",
     "MODERATION",
     "MODULES",
@@ -65,6 +74,7 @@ __all__ = [
     "EscalationConfig",
     "EscalationModule",
     "EscalationRule",
+    "GroupAdmin",
     "IdentityConfig",
     "IdentityModule",
     "ModerationConfig",

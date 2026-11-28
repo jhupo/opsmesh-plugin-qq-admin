@@ -70,6 +70,9 @@ async def process_group_event(gateway: Gateway, event: GroupNoticeEvent) -> str 
     if isinstance(event, GroupDelRobotEvent):
         IDENTITY.forget_group(group_id)
         AUDIT.forget_group(group_id)
+        WARNING.forget_group(group_id)
+        SAFEGUARD.forget_group(group_id)
+        MODERATION.forget_group(group_id)
         return None
     if not MANAGER.is_group_enabled(group_id):
         return None
@@ -97,6 +100,7 @@ async def process_group_event(gateway: Gateway, event: GroupNoticeEvent) -> str 
         IDENTITY.forget_member(group_id, member_id)
         WARNING.clear_member(group_id, member_id)
         SAFEGUARD.clear_member(group_id, member_id)
+        MODERATION.clear_member(group_id, member_id)
         _audit_lifecycle(group_id, "member_leave", member_id)
     return None
 

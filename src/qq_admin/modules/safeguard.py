@@ -8,10 +8,11 @@ from typing import Literal
 from pydantic import BaseModel, Field
 from qq import Gateway
 
+from qq_admin.exception import ConfigError
 from qq_admin.store import CONFIG_STORE, ConfigStore, parse_field_value
 
 from .duration import MAX_QQ_MUTE_SECONDS, MIN_QQ_MUTE_SECONDS
-from .escalation import ESCALATION, EscalationModule
+from .escalation import ESCALATION, EscalationModule, EscalationRule
 from .identity import IDENTITY, IdentityModule
 
 GuardAction = Literal["warn", "mute", "kick", "ban", "recall"]
@@ -40,6 +41,7 @@ class PolicyVerdict:
     blocked_by: str = ""
     effective_mute_seconds: int | None = None
     escalated_action: str | None = None
+    escalation_rule: EscalationRule | None = None
     bot_role: str = "member"
 
 
@@ -76,8 +78,31 @@ class SafeguardModule:
         current = self.config(group_id).model_dump()
         current[key] = parse_field_value(SafeguardConfig, key, raw_value)
         validated = SafeguardConfig.model_validate(current)
-        self._store.save_section("safeguard", validated.model_dump(), group_id=group_id)
+        self._store.save_section(
+            "safeguard",
+            validated.model_dump(),
+            group_id=group_id,
+            defaults=SafeguardConfig().model_dump(),
+        )
         return validated
+
+    def reset_config(self, group_id: str, key: str | None = None) -> SafeguardConfig:
+        if key and key not in SafeguardConfig.model_fields:
+            raise ConfigError(f"Unknown config field: {key}")
+        self._store.reset_section("safeguard", key, group_id=group_id)
+        return self.config(group_id)
+
+    def is_whitelisted(self, group_id: str, member_id: str) -> bool:
+        """Fast pure-code check for protected/exempt/configured-admin members."""
+        cfg = self.config(group_id)
+        if not cfg.enabled:
+            return False
+        return (
+            member_id in cfg.protected_users
+            or member_id in cfg.exempt_users
+            or self._identity.is_global_admin(member_id)
+            or member_id in self._identity.config(group_id).admins
+        )
 
     def add_exempt(self, group_id: str, member_id: str) -> None:
         cfg = self.config(group_id)
@@ -86,7 +111,10 @@ class SafeguardModule:
                 update={"exempt_users": [*cfg.exempt_users, member_id]}
             )
             self._store.save_section(
-                "safeguard", updated.model_dump(), group_id=group_id
+                "safeguard",
+                updated.model_dump(),
+                group_id=group_id,
+                defaults=SafeguardConfig().model_dump(),
             )
 
     def remove_exempt(self, group_id: str, member_id: str) -> None:
@@ -96,7 +124,10 @@ class SafeguardModule:
                 update={"exempt_users": [u for u in cfg.exempt_users if u != member_id]}
             )
             self._store.save_section(
-                "safeguard", updated.model_dump(), group_id=group_id
+                "safeguard",
+                updated.model_dump(),
+                group_id=group_id,
+                defaults=SafeguardConfig().model_dump(),
             )
 
     def _roll_day(self) -> None:
@@ -132,6 +163,14 @@ class SafeguardModule:
         self._mute_timestamps.pop((group_id, member_id), None)
         self._verified_members.pop((group_id, member_id), None)
 
+    def forget_group(self, group_id: str) -> None:
+        for key in [k for k in self._daily_counts if k[0] == group_id]:
+            self._daily_counts.pop(key, None)
+        for key in [k for k in self._mute_timestamps if k[0] == group_id]:
+            self._mute_timestamps.pop(key, None)
+        for key in [k for k in self._verified_members if k[0] == group_id]:
+            self._verified_members.pop(key, None)
+
     async def check_action(
         self,
         gateway: Gateway,
@@ -142,15 +181,13 @@ class SafeguardModule:
         mute_seconds: int | None = None,
         require_confirm: bool = False,
     ) -> PolicyVerdict:
-        """Run protection, action-specific quotas, and escalation checks."""
+        """Evaluate role-aware guardrails via focused per-concern checks."""
         bot_role = await self._identity.bot_role(gateway, group_id)
         if bot_role == "member":
-            return _block(
-                "bot_not_admin", "bot is not a group admin or owner", bot_role
-            )
+            return _block("bot_not_admin", "bot is not an admin or owner", bot_role)
 
         clamped = (
-            max(MIN_QQ_MUTE_SECONDS, min(mute_seconds, MAX_QQ_MUTE_SECONDS))
+            max(MIN_QQ_MUTE_SECONDS, min(MAX_QQ_MUTE_SECONDS, mute_seconds))
             if mute_seconds is not None
             else None
         )
@@ -177,11 +214,12 @@ class SafeguardModule:
             ):
                 return blocked
 
-        escalated, clamped = self._apply_escalation(group_id, target_id, clamped, cfg)
+        step, clamped = self._apply_escalation(group_id, target_id, clamped, cfg)
         return PolicyVerdict(
             allowed=True,
             effective_mute_seconds=clamped,
-            escalated_action=escalated,
+            escalated_action=step.action if step else None,
+            escalation_rule=step,
             bot_role=bot_role,
         )
 
@@ -265,7 +303,7 @@ class SafeguardModule:
         target_id: str,
         mute_seconds: int | None,
         cfg: SafeguardConfig,
-    ) -> tuple[str | None, int | None]:
+    ) -> tuple[EscalationRule | None, int | None]:
         step = self._escalation.resolve_step(group_id, target_id)
         if step is None:
             return None, mute_seconds
@@ -273,7 +311,7 @@ class SafeguardModule:
             mute_seconds = min(
                 max(mute_seconds, step.mute_seconds), cfg.max_mute_duration
             )
-        return step.action, mute_seconds
+        return step, mute_seconds
 
     def clear(self) -> None:
         self._daily_counts.clear()

@@ -1,26 +1,29 @@
 # Architecture
 
-`opsmesh-plugin-qq-admin` is structured into five clean layers with zero circular abstractions:
+`opsmesh-plugin-qq-admin` separates deterministic group governance from downstream conversational agents:
 
 ```text
 src/qq_admin/
-├── __init__.py          # PluginMetadata(supported_adapters={"qq"}), configure(), auto-bind
-├── config.py            # JevConfig, AgentConfig, ConfigStore (module-agnostic TOML store)
-├── manager.py           # ServiceManager holding models and feature modules directly
-├── prompts/             # Jev text/image safety prompts, guardrails, agent prompts, notices
-├── models/              # Jev, DecisionAgent, ReplyAgent, 9 @function_tool, 3 guardrails
-├── modules/             # Self-contained modules (identity, safeguard, warning, escalation, audit, moderation, approval)
+├── __init__.py          # PluginMetadata(supported_adapters={"qq"}) and public exports
+├── config.py            # Flat startup Config (Jev, OpenAI Responses API, default_group_enabled)
+├── store.py             # Thread-safe CONFIG_STORE with diff-only per-group TOML overrides
+├── manager.py           # Global MANAGER holding shared Jev & ReplyAgent clients
+├── prompts/             # reply_agent.md, jev.toml, notices.toml
+├── models/              # Stateless Jev, ReplyAgent, and pure-code reply_guardrail
+├── modules/             # Global singletons: IDENTITY, SAFEGUARD, WARNING, ESCALATION, AUDIT, MODERATION, APPROVAL
 ├── commands/            # Direct OpsMesh slash commands (admin, actions, queries)
-└── messages/            # Direct OpsMesh entries (group_message, group_events)
+└── messages/            # Group message firewall & lifecycle notice handlers
 ```
 
 ## Event Flow
 
-1. **Commands (`priority=1`)**: `/admin`, `/warn`, `/mute`, `/kick`, `/ban`, `/recall`, `/approve`, `/reject`, `/shutlist`, `/blacklist`, `/requests`, `/member` authorize via `IdentityModule` and execute directly.
+1. **Slash Commands (`priority=1, block=True`)**:
+   - `/admin <status|groups|on|off|config|log|perm|exempt|unexempt|undo>` returns deterministic ops text and validates `IDENTITY.is_admin` against the **target** `group_id`.
+   - `/warn`, `/mute`, `/unmute`, `/kick`, `/ban`, `/unban`, `/recall`, `/approve`, `/reject` execute Official QQ v2 actions and compose replies via `ReplyAgent`.
 2. **Group Messages (`priority=5, block=False`)**:
-   - Checks `manager.is_group_enabled(group_id)` first; disabled groups return silently.
-   - Owner/admin `@Bot` instructions route to `DecisionAgent` → `ReplyAgent`.
-   - Member messages run `Jev.execute()` → if safe/banter, return silently; if violating, run `DecisionAgent` (or direct ladder fallback) → `ReplyAgent`.
+   - Disabled groups, whitelisted users, and group/global admins pass silently (`False, None`) to downstream conversational/Agent plugins.
+   - Regular member messages run deterministic flood/repeat checks -> stateless `Jev.execute()` -> deterministic punishment (`warn` auto-mute upgrade + `ESCALATION` kick upgrade + `SAFEGUARD` 8-step checks) -> `ReplyAgent` persona reply -> `stop_propagation()`.
+   - Prompt-injection / jailbreak hits are audited and stopped upstream without sending noise.
 3. **Group Lifecycle Notices (`priority=5, block=False`)**:
-   - `GroupAddRobotEvent` / `GroupDelRobotEvent` refresh or clear group caches and sessions.
+   - `GroupAddRobotEvent` / `GroupDelRobotEvent` refresh or clear all per-group module caches.
    - `GroupJoinRequestEvent`, `GroupMemberAddEvent`, `GroupMemberRemoveEvent` run when the group is enabled.

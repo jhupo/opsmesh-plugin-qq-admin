@@ -5,6 +5,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 from qq import Gateway, JoinRequest
 
+from qq_admin.exception import ConfigError
 from qq_admin.manager import MANAGER
 from qq_admin.prompts import load_toml, notice
 from qq_admin.store import CONFIG_STORE, ConfigStore, parse_field_value
@@ -27,8 +28,18 @@ class ApprovalConfig(BaseModel):
     daily_reject_limit: int = Field(default=20, ge=1)
 
 
+def _has_review_text(request: JoinRequest) -> bool:
+    verify = request.verify_info
+    verify_msg = (verify.verify_message or "").strip() if verify else ""
+    qa_list = (verify.review_qa_list or []) if verify else []
+    has_qa = any(
+        (qa.question or "").strip() or (qa.answer or "").strip() for qa in qa_list
+    )
+    return bool((request.username or "").strip() or verify_msg or has_qa)
+
+
 class ApprovalModule:
-    """Reviews Official QQ v2 join requests via risk_tips and Jev."""
+    """Reviews Official QQ v2 join requests via deterministic checks and Jev."""
 
     def __init__(self, store: ConfigStore) -> None:
         self._store = store
@@ -43,8 +54,19 @@ class ApprovalModule:
         current = self.config(group_id).model_dump()
         current[key] = parse_field_value(ApprovalConfig, key, raw_value)
         validated = ApprovalConfig.model_validate(current)
-        self._store.save_section("approval", validated.model_dump(), group_id=group_id)
+        self._store.save_section(
+            "approval",
+            validated.model_dump(),
+            group_id=group_id,
+            defaults=ApprovalConfig().model_dump(),
+        )
         return validated
+
+    def reset_config(self, group_id: str, key: str | None = None) -> ApprovalConfig:
+        if key and key not in ApprovalConfig.model_fields:
+            raise ConfigError(f"Unknown config field: {key}")
+        self._store.reset_section("approval", key, group_id=group_id)
+        return self.config(group_id)
 
     async def risk_probability(self, group_id: str, request: JoinRequest) -> float:
         verify = request.verify_info
@@ -60,11 +82,29 @@ class ApprovalModule:
                 "qa_pairs": qa_pairs,
                 "risk_tips": request.risk_tips or "",
             },
-            str(
-                load_toml("jev_guards.toml")
-                .get("join_request", {})
-                .get("is_risky_instructions", "")
-            ),
+            str(load_toml("jev.toml").get("join_request_instructions", "")),
+        )
+
+    async def _authorize_operator(
+        self,
+        gateway: Gateway,
+        group_id: str,
+        action: str,
+        member_id: str,
+        operator_id: str,
+    ) -> ActionOutcome | None:
+        if operator_id == "bot":
+            return None
+        if await IDENTITY.is_admin(gateway, group_id, operator_id):
+            return None
+        self._audit(
+            group_id, action, member_id, operator_id, "operator not admin", False
+        )
+        return ActionOutcome(
+            succeeded=False,
+            action=action,
+            blocked_by="permission_denied",
+            message=notice("denied"),
         )
 
     async def approve(
@@ -76,6 +116,10 @@ class ApprovalModule:
         request_id: str | None = None,
         operator_id: str = "bot",
     ) -> ActionOutcome:
+        if denied := await self._authorize_operator(
+            gateway, group_id, "approve", member_id, operator_id
+        ):
+            return denied
         try:
             await gateway.approval_join_request(
                 group_id, member_id, op="approve", join_request_id=request_id
@@ -103,6 +147,10 @@ class ApprovalModule:
         blacklist: bool = False,
         operator_id: str = "bot",
     ) -> ActionOutcome:
+        if denied := await self._authorize_operator(
+            gateway, group_id, "reject", member_id, operator_id
+        ):
+            return denied
         try:
             await gateway.approval_join_request(
                 group_id,
@@ -138,11 +186,30 @@ class ApprovalModule:
         if bot_role == "member":
             return None
 
+        is_owner = bot_role == "owner"
         decision = cfg.default_action
         reason = notice("auto_approve_reason")
+
+        if SAFEGUARD.is_whitelisted(group_id, request.member_openid):
+            if decision != "approve" or self._over_daily_limit(
+                group_id, "approve", cfg, owner=is_owner
+            ):
+                return None
+            return await self.approve(
+                gateway,
+                group_id,
+                request.member_openid,
+                request_id=request.join_request_id,
+            )
+
         if cfg.reject_on_risk_tips and request.risk_tips:
             decision, reason = "reject", notice("auto_reject_risk")
-        elif cfg.use_jev_review and MANAGER.jev.is_ready:
+        elif (
+            cfg.use_jev_review
+            and MANAGER.jev.is_ready
+            and _has_review_text(request)
+            and not self._jev_cannot_change_outcome(group_id, cfg, owner=is_owner)
+        ):
             try:
                 risky = await self.risk_probability(group_id, request)
             except Exception:
@@ -151,7 +218,7 @@ class ApprovalModule:
                 decision, reason = "reject", notice("auto_reject_jev")
 
         if decision == "ignore" or self._over_daily_limit(
-            group_id, decision, cfg, owner=bot_role == "owner"
+            group_id, decision, cfg, owner=is_owner
         ):
             return None
         if decision == "approve":
@@ -168,6 +235,18 @@ class ApprovalModule:
             request_id=request.join_request_id,
             reason=reason,
         )
+
+    def _jev_cannot_change_outcome(
+        self, group_id: str, cfg: ApprovalConfig, *, owner: bool
+    ) -> bool:
+        """Short-circuit Jev when daily reject/approve quotas already block action."""
+        if owner or cfg.default_action == "reject":
+            return cfg.default_action == "reject"
+        reject_full = self._over_daily_limit(group_id, "reject", cfg, owner=False)
+        if cfg.default_action == "ignore":
+            return reject_full
+        approve_full = self._over_daily_limit(group_id, "approve", cfg, owner=False)
+        return reject_full and approve_full
 
     def _over_daily_limit(
         self, group_id: str, decision: str, cfg: ApprovalConfig, *, owner: bool

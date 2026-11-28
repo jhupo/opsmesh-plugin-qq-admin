@@ -1,4 +1,4 @@
-"""Direct OpsMesh /admin commands for group toggles, online config, and logs."""
+"""Direct OpsMesh /admin console commands (deterministic, multi-group safe)."""
 
 import json
 
@@ -18,9 +18,10 @@ from qq_admin.modules import (
 )
 from qq_admin.prompts import notice
 
-from .helpers import command_args, compose_reply, finish_outcome, require_admin
+from .helpers import command_args, finish_outcome, require_admin
 
 admin_status_cmd = on_command("admin status", aliases={"admin"}, priority=1, block=True)
+admin_groups_cmd = on_command("admin groups", priority=1, block=True)
 admin_on_cmd = on_command("admin on", priority=1, block=True)
 admin_off_cmd = on_command("admin off", priority=1, block=True)
 admin_config_cmd = on_command("admin config", priority=1, block=True)
@@ -35,72 +36,90 @@ admin_undo_cmd = on_command("admin undo", priority=1, block=True)
 async def handle_admin_status(
     gateway: Gateway, event: GroupMessageEvent, matcher: Matcher
 ) -> None:
-    await require_admin(gateway, event, matcher, "admin status")
     args = command_args(event, prefix_words=2)
     group_id = args[0] if args else event.group_openid
+    await require_admin(gateway, event, matcher, "admin status", group_id=group_id)
+
     bot_role = await IDENTITY.bot_role(gateway, group_id, force=True)
     enabled = MANAGER.is_group_enabled(group_id)
     safeguard = SAFEGUARD.config(group_id)
     approval = APPROVAL.config(group_id)
     counts = SAFEGUARD.daily_counts(group_id)
-    fallback = notice(
-        "admin_status",
-        group_id=group_id,
-        bot_role=bot_role,
-        status="on" if enabled else "off",
-        mute_count=counts["mute"],
-        mute_limit=safeguard.daily_mute_limit,
-        kick_count=counts["kick"],
-        kick_limit=safeguard.daily_kick_limit,
-        approve_count=counts["approve"],
-        approve_limit=approval.daily_approve_limit,
-        reject_count=counts["reject"],
-        reject_limit=approval.daily_reject_limit,
+    await matcher.finish(
+        notice(
+            "admin_status",
+            group_id=group_id,
+            bot_role=bot_role,
+            status="on" if enabled else "off",
+            mute_count=counts["mute"],
+            mute_limit=safeguard.daily_mute_limit,
+            kick_count=counts["kick"],
+            kick_limit=safeguard.daily_kick_limit,
+            approve_count=counts["approve"],
+            approve_limit=approval.daily_approve_limit,
+            reject_count=counts["reject"],
+            reject_limit=approval.daily_reject_limit,
+        )
     )
-    reply = await compose_reply(
-        gateway,
-        event,
-        scenario="admin_status",
-        fallback=fallback,
-        facts={"group_id": group_id, "enabled": enabled, "daily": counts},
-    )
-    await matcher.finish(reply)
+
+
+@admin_groups_cmd.handle()
+async def handle_admin_groups(
+    gateway: Gateway, event: GroupMessageEvent, matcher: Matcher
+) -> None:
+    await require_admin(gateway, event, matcher, "admin groups")
+    operator_id = event.get_user_id()
+    default_mode = "on" if MANAGER.config.default_group_enabled else "off"
+    candidates = MANAGER.managed_groups()
+    if event.group_openid and event.group_openid not in candidates:
+        candidates = sorted({*candidates, event.group_openid})
+
+    visible: list[str] = []
+    if IDENTITY.is_global_admin(operator_id):
+        visible = candidates
+    else:
+        for gid in candidates:
+            if await IDENTITY.is_admin(gateway, gid, operator_id):
+                visible.append(gid)
+
+    if not visible:
+        await matcher.finish(notice("groups_empty", default_mode=default_mode))
+
+    header = notice("groups_header", count=len(visible), default_mode=default_mode)
+    lines: list[str] = [header]
+    for gid in visible:
+        role = await IDENTITY.bot_role(gateway, gid)
+        status = "on" if MANAGER.is_group_enabled(gid) else "off"
+        counts = SAFEGUARD.daily_counts(gid)
+        sg = SAFEGUARD.config(gid)
+        lines.append(
+            f"- {gid}: status={status} bot_role={role} "
+            f"mute={counts['mute']}/{sg.daily_mute_limit} "
+            f"kick={counts['kick']}/{sg.daily_kick_limit}"
+        )
+    await matcher.finish("\n".join(lines))
 
 
 @admin_on_cmd.handle()
 async def handle_admin_on(
     gateway: Gateway, event: GroupMessageEvent, matcher: Matcher
 ) -> None:
-    await require_admin(gateway, event, matcher, "admin on")
     args = command_args(event, prefix_words=2)
     group_id = args[0] if args else event.group_openid
+    await require_admin(gateway, event, matcher, "admin on", group_id=group_id)
     MANAGER.set_group_enabled(group_id, True)
-    reply = await compose_reply(
-        gateway,
-        event,
-        scenario="admin_on",
-        fallback=notice("admin_on", group_id=group_id),
-        facts={"group_id": group_id, "enabled": True},
-    )
-    await matcher.finish(reply)
+    await matcher.finish(notice("admin_on", group_id=group_id))
 
 
 @admin_off_cmd.handle()
 async def handle_admin_off(
     gateway: Gateway, event: GroupMessageEvent, matcher: Matcher
 ) -> None:
-    await require_admin(gateway, event, matcher, "admin off")
     args = command_args(event, prefix_words=2)
     group_id = args[0] if args else event.group_openid
+    await require_admin(gateway, event, matcher, "admin off", group_id=group_id)
     MANAGER.set_group_enabled(group_id, False)
-    reply = await compose_reply(
-        gateway,
-        event,
-        scenario="admin_off",
-        fallback=notice("admin_off", group_id=group_id),
-        facts={"group_id": group_id, "enabled": False},
-    )
-    await matcher.finish(reply)
+    await matcher.finish(notice("admin_off", group_id=group_id))
 
 
 @admin_config_cmd.handle()
@@ -135,10 +154,19 @@ async def handle_admin_config(
                     value=getattr(updated, field_name),
                 )
             )
+
+        if len(args) >= 2 and args[0] == "reset":
+            mod_name, _, field_name = args[1].partition(".")
+            get_module(mod_name).reset_config(group_id, field_name or None)
+            await matcher.finish(
+                notice("config_reset", group_id=group_id, target=args[1])
+            )
     except (ConfigError, ValueError) as exc:
         await matcher.finish(f"Config error: {exc}")
 
-    await matcher.finish("Usage: /admin config <get|set> <module>[.<field>] [value]")
+    await matcher.finish(
+        "Usage: /admin config <get|set|reset> <module>[.<field>] [value]"
+    )
 
 
 @admin_log_cmd.handle()
@@ -185,8 +213,9 @@ async def handle_admin_exempt(
     if not args:
         await matcher.finish("Usage: /admin exempt <member>")
     member_id = args[0].lstrip("@")
-    SAFEGUARD.add_exempt(event.group_openid, member_id)
-    await matcher.finish(notice("exempt_added", member_id=member_id))
+    group_id = event.group_openid
+    SAFEGUARD.add_exempt(group_id, member_id)
+    await matcher.finish(notice("exempt_added", group_id=group_id, member_id=member_id))
 
 
 @admin_unexempt_cmd.handle()
@@ -198,8 +227,11 @@ async def handle_admin_unexempt(
     if not args:
         await matcher.finish("Usage: /admin unexempt <member>")
     member_id = args[0].lstrip("@")
-    SAFEGUARD.remove_exempt(event.group_openid, member_id)
-    await matcher.finish(notice("exempt_removed", member_id=member_id))
+    group_id = event.group_openid
+    SAFEGUARD.remove_exempt(group_id, member_id)
+    await matcher.finish(
+        notice("exempt_removed", group_id=group_id, member_id=member_id)
+    )
 
 
 @admin_undo_cmd.handle()

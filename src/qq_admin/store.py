@@ -1,8 +1,10 @@
-"""Module-agnostic TOML persistence store and CLI field coercion helpers."""
+"""Module-agnostic TOML persistence store with per-group diff overrides."""
 
 from copy import deepcopy
 import json
+import os
 from pathlib import Path
+from threading import RLock
 import tomllib
 from typing import Any, Literal, get_args, get_origin
 
@@ -19,6 +21,12 @@ def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any
         else:
             merged[key] = deepcopy(value)
     return merged
+
+
+def _diff_dict(values: dict[str, Any], baseline: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: deepcopy(val) for key, val in values.items() if baseline.get(key) != val
+    }
 
 
 def _toml_key(key: str) -> str:
@@ -133,7 +141,7 @@ def parse_field_value(
 
 
 class ConfigStore:
-    """Module-agnostic configuration persistence store backed by TOML."""
+    """Thread-safe TOML configuration store with diff-only per-group overrides."""
 
     def __init__(
         self,
@@ -141,6 +149,7 @@ class ConfigStore:
         *,
         path: str | Path | None = None,
     ) -> None:
+        self._lock = RLock()
         self._path = Path(path) if path else None
         self._data: dict[str, Any] = deepcopy(data) if data else {}
 
@@ -158,7 +167,8 @@ class ConfigStore:
         return self._path
 
     def raw_data(self) -> dict[str, Any]:
-        return deepcopy(self._data)
+        with self._lock:
+            return deepcopy(self._data)
 
     def load_section(
         self,
@@ -167,20 +177,21 @@ class ConfigStore:
         group_id: str | None = None,
     ) -> dict[str, Any]:
         """Load global defaults merged with optional per-group overrides."""
-        global_sec = self._data.get(namespace)
-        base = deepcopy(global_sec) if isinstance(global_sec, dict) else {}
-        if not group_id:
-            return base
-        groups = self._data.get("groups")
-        if not isinstance(groups, dict):
-            return base
-        group_sec = groups.get(group_id)
-        if not isinstance(group_sec, dict):
-            return base
-        override = group_sec.get(namespace)
-        if not isinstance(override, dict):
-            return base
-        return _deep_merge(base, override)
+        with self._lock:
+            global_sec = self._data.get(namespace)
+            base = deepcopy(global_sec) if isinstance(global_sec, dict) else {}
+            if not group_id:
+                return base
+            groups = self._data.get("groups")
+            if not isinstance(groups, dict):
+                return base
+            group_sec = groups.get(group_id)
+            if not isinstance(group_sec, dict):
+                return base
+            override = group_sec.get(namespace)
+            if not isinstance(override, dict):
+                return base
+            return _deep_merge(base, override)
 
     def save_section(
         self,
@@ -188,40 +199,96 @@ class ConfigStore:
         values: dict[str, Any],
         *,
         group_id: str | None = None,
+        defaults: dict[str, Any] | None = None,
     ) -> None:
-        """Persist a module's config dict globally or for a specific group."""
-        if group_id:
-            groups = self._data.setdefault("groups", {})
-            group_sec = groups.setdefault(group_id, {})
-            group_sec[namespace] = deepcopy(values)
-        else:
-            self._data[namespace] = deepcopy(values)
-        self.flush()
+        """Persist a module's config globally or store diff-only per-group overrides."""
+        with self._lock:
+            if group_id:
+                global_sec = self._data.get(namespace)
+                base_global = (
+                    deepcopy(global_sec) if isinstance(global_sec, dict) else {}
+                )
+                baseline = (
+                    _deep_merge(defaults, base_global)
+                    if defaults is not None
+                    else base_global
+                )
+                diff = _diff_dict(values, baseline) if defaults is not None else values
+                groups = self._data.setdefault("groups", {})
+                group_sec = groups.setdefault(group_id, {})
+                if diff:
+                    group_sec[namespace] = deepcopy(diff)
+                else:
+                    group_sec.pop(namespace, None)
+                    if not group_sec:
+                        groups.pop(group_id, None)
+            else:
+                payload = (
+                    _diff_dict(values, defaults) if defaults is not None else values
+                )
+                if payload:
+                    self._data[namespace] = deepcopy(payload)
+                else:
+                    self._data.pop(namespace, None)
+            self.flush()
 
-    def is_group_enabled(self, group_id: str) -> bool:
-        groups = self._data.get("groups")
-        if not isinstance(groups, dict):
-            return False
-        group_sec = groups.get(group_id)
-        if not isinstance(group_sec, dict):
-            return False
-        return bool(group_sec.get("enabled", False))
+    def reset_section(
+        self,
+        namespace: str,
+        field_name: str | None = None,
+        *,
+        group_id: str,
+    ) -> None:
+        """Remove a field override or an entire module override for one group."""
+        with self._lock:
+            groups = self._data.get("groups")
+            if not isinstance(groups, dict):
+                return
+            group_sec = groups.get(group_id)
+            if not isinstance(group_sec, dict):
+                return
+            if field_name:
+                mod_sec = group_sec.get(namespace)
+                if isinstance(mod_sec, dict):
+                    mod_sec.pop(field_name, None)
+                    if not mod_sec:
+                        group_sec.pop(namespace, None)
+            else:
+                group_sec.pop(namespace, None)
+            if not group_sec:
+                groups.pop(group_id, None)
+            self.flush()
+
+    def is_group_enabled(self, group_id: str, *, default: bool = False) -> bool:
+        with self._lock:
+            groups = self._data.get("groups")
+            if isinstance(groups, dict):
+                group_sec = groups.get(group_id)
+                if isinstance(group_sec, dict) and "enabled" in group_sec:
+                    return bool(group_sec["enabled"])
+            return bool(default)
 
     def set_group_enabled(self, group_id: str, enabled: bool) -> None:
-        groups = self._data.setdefault("groups", {})
-        group_sec = groups.setdefault(group_id, {})
-        group_sec["enabled"] = bool(enabled)
-        self.flush()
+        with self._lock:
+            groups = self._data.setdefault("groups", {})
+            group_sec = groups.setdefault(group_id, {})
+            group_sec["enabled"] = bool(enabled)
+            self.flush()
 
-    def enabled_groups(self) -> list[str]:
-        groups = self._data.get("groups")
-        if not isinstance(groups, dict):
-            return []
-        return sorted(
-            gid
-            for gid, sec in groups.items()
-            if isinstance(sec, dict) and bool(sec.get("enabled", False))
-        )
+    def known_groups(self) -> list[str]:
+        with self._lock:
+            groups = self._data.get("groups")
+            if not isinstance(groups, dict):
+                return []
+            return sorted(gid for gid, sec in groups.items() if isinstance(sec, dict))
+
+    def enabled_groups(self, *, default: bool = False) -> list[str]:
+        with self._lock:
+            return [
+                gid
+                for gid in self.known_groups()
+                if self.is_group_enabled(gid, default=default)
+            ]
 
     def reset(
         self,
@@ -230,21 +297,25 @@ class ConfigStore:
         path: str | Path | None = None,
     ) -> "ConfigStore":
         """Replace backing data/path in place so global modules stay bound."""
-        self._path = Path(path) if path else None
-        if data is not None:
-            self._data = deepcopy(data)
-        elif self._path is not None and self._path.is_file():
-            with self._path.open("rb") as fp:
-                self._data = tomllib.load(fp)
-        else:
-            self._data = {}
-        return self
+        with self._lock:
+            self._path = Path(path) if path else None
+            if data is not None:
+                self._data = deepcopy(data)
+            elif self._path is not None and self._path.is_file():
+                with self._path.open("rb") as fp:
+                    self._data = tomllib.load(fp)
+            else:
+                self._data = {}
+            return self
 
     def flush(self) -> None:
-        if self._path is None:
-            return
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._path.write_text(dump_toml(self._data), encoding="utf-8")
+        with self._lock:
+            if self._path is None:
+                return
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+            tmp_path = self._path.with_suffix(f"{self._path.suffix}.tmp")
+            tmp_path.write_text(dump_toml(self._data), encoding="utf-8")
+            os.replace(tmp_path, self._path)
 
 
 CONFIG_STORE = ConfigStore()

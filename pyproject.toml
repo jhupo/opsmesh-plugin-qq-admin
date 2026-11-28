@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "opsmesh-plugin-qq-admin"
 version = "0.2.0"
-description = "Automatic Official QQ Bot v2 group administration plugin for OpsMesh powered by TypeSafe AI Jev and dual OpenAI Agents SDK controllers"
+description = "Automatic Official QQ Bot v2 group administration plugin for OpsMesh powered by deterministic moderation, TypeSafe AI Jev, and persona ReplyAgent"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]

@@ -1,4 +1,4 @@
-"""Shared admin check and ReplyAgent helpers for command handlers."""
+"""Shared target-group admin check and ReplyAgent helpers for command handlers."""
 
 from typing import Any
 
@@ -24,19 +24,20 @@ async def compose_reply(
     *,
     scenario: str,
     fallback: str,
+    group_id: str | None = None,
     target_id: str = "",
     executed_actions: list[str] | None = None,
     facts: dict[str, Any] | None = None,
 ) -> str:
     if not MANAGER.reply_agent.is_ready:
         return fallback
-    group_id = event.group_openid
+    target_group = group_id or event.group_openid
     operator_id = event.get_user_id()
-    bot_role = await IDENTITY.bot_role(gateway, group_id)
-    actor_role = await IDENTITY.member_role(gateway, group_id, operator_id)
+    bot_role = await IDENTITY.bot_role(gateway, target_group)
+    actor_role = await IDENTITY.member_role(gateway, target_group, operator_id)
     return await MANAGER.reply_agent.execute(
         ReplySpec(
-            group_id=group_id,
+            group_id=target_group,
             bot_role=bot_role,
             scenario=scenario,
             actor_id=operator_id,
@@ -54,18 +55,21 @@ async def require_admin(
     event: GroupMessageEvent,
     matcher: Matcher,
     command_name: str,
+    *,
+    group_id: str | None = None,
 ) -> None:
-    """Verify the sender is a group/global admin; finish silently or with denial."""
-    group_id = event.group_openid
-    if await IDENTITY.is_admin(gateway, group_id, event.get_user_id()):
+    """Verify the sender is an admin of target group_id (or global admin)."""
+    target_group = group_id or event.group_openid
+    if await IDENTITY.is_admin(gateway, target_group, event.get_user_id()):
         return
-    if IDENTITY.config(group_id).deny_response == "reply":
+    if IDENTITY.config(target_group).deny_response == "reply":
         reply = await compose_reply(
             gateway,
             event,
             scenario="permission_denied",
             fallback=notice("denied"),
-            facts={"command": command_name},
+            group_id=target_group,
+            facts={"command": command_name, "group_id": target_group},
         )
         await matcher.finish(reply)
     await matcher.finish()
@@ -77,6 +81,7 @@ async def finish_outcome(
     matcher: Matcher,
     outcome: ActionOutcome,
     *,
+    group_id: str | None = None,
     target_id: str = "",
 ) -> None:
     scenario = (
@@ -89,6 +94,7 @@ async def finish_outcome(
         event,
         scenario=scenario,
         fallback=outcome.message,
+        group_id=group_id,
         target_id=target_id,
         executed_actions=[outcome.action] if outcome.succeeded else [],
         facts={

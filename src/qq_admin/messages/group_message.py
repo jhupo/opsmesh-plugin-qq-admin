@@ -1,4 +1,4 @@
-"""Direct OpsMesh group message entry: admins -> @Bot control, users -> moderation."""
+"""Direct OpsMesh group message entry: admins/exempt pass through, members moderated."""
 
 import re
 
@@ -8,7 +8,7 @@ from opsmesh.matcher import Matcher
 from qq import Gateway, GroupMessageEvent
 
 from qq_admin.manager import MANAGER
-from qq_admin.modules import IDENTITY, MODERATION
+from qq_admin.modules import IDENTITY, MODERATION, SAFEGUARD
 
 group_msg = on_message(priority=5, block=False)
 _URL_RE = re.compile(r"https?://\S+", re.IGNORECASE)
@@ -35,37 +35,34 @@ async def download_images(gateway: Gateway, event: GroupMessageEvent) -> list[by
 async def process_group_message(
     gateway: Gateway, event: GroupMessageEvent
 ) -> tuple[bool, str | None]:
-    """Return (handled, reply). Admins are never moderated; safe chat is silent."""
+    """Return (handled, reply); admins and safe chat pass silently downstream."""
     group_id = event.group_openid
     member_id = event.get_user_id()
-    if not group_id or not MANAGER.is_group_enabled(group_id):
+    if (
+        not group_id
+        or not MANAGER.is_group_enabled(group_id)
+        or not MODERATION.config(group_id).enabled
+    ):
         return False, None
+
     text = event.get_plaintext().strip() or (event.content or "").strip()
     if text.startswith("/"):
         return False, None
 
-    if await IDENTITY.is_admin(gateway, group_id, member_id):
-        if event.is_tome() and text:
-            sender_role = await IDENTITY.member_role(gateway, group_id, member_id)
-            return await MODERATION.follow_admin_instruction(
-                gateway,
-                group_id=group_id,
-                member_id=member_id,
-                message_id=event.id,
-                text=text,
-                sender_role=sender_role,
-            )
+    if SAFEGUARD.is_whitelisted(group_id, member_id) or await IDENTITY.is_admin(
+        gateway, group_id, member_id
+    ):
         return False, None
 
     urls = _URL_RE.findall(text)
+    images = await download_images(gateway, event)
     return await MODERATION.moderate_message(
         gateway,
         group_id=group_id,
         member_id=member_id,
         message_id=event.id,
         text=text,
-        sender_role="member",
-        images=await download_images(gateway, event),
+        images=images,
         urls=urls or None,
     )
 

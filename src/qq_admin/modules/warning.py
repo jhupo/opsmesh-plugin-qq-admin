@@ -4,6 +4,7 @@ import time
 
 from pydantic import BaseModel, Field
 
+from qq_admin.exception import ConfigError
 from qq_admin.store import CONFIG_STORE, ConfigStore, parse_field_value
 
 
@@ -36,8 +37,19 @@ class WarningModule:
         current = self.config(group_id).model_dump()
         current[key] = parse_field_value(WarningConfig, key, raw_value)
         validated = WarningConfig.model_validate(current)
-        self._store.save_section("warning", validated.model_dump(), group_id=group_id)
+        self._store.save_section(
+            "warning",
+            validated.model_dump(),
+            group_id=group_id,
+            defaults=WarningConfig().model_dump(),
+        )
         return validated
+
+    def reset_config(self, group_id: str, key: str | None = None) -> WarningConfig:
+        if key and key not in WarningConfig.model_fields:
+            raise ConfigError(f"Unknown config field: {key}")
+        self._store.reset_section("warning", key, group_id=group_id)
+        return self.config(group_id)
 
     def _window_and_threshold(self, group_id: str, category: str) -> tuple[int, int]:
         cfg = self.config(group_id)
@@ -65,6 +77,10 @@ class WarningModule:
     def clear_member(self, group_id: str, member_id: str) -> None:
         stale = [k for k in self._warnings if k[0] == group_id and k[1] == member_id]
         for key in stale:
+            self._warnings.pop(key, None)
+
+    def forget_group(self, group_id: str) -> None:
+        for key in [k for k in self._warnings if k[0] == group_id]:
             self._warnings.pop(key, None)
 
     def clear(self) -> None:

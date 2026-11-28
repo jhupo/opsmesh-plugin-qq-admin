@@ -1,11 +1,7 @@
-# Fallback notices (used only when ReplyAgent is unavailable) and guardrail patterns.
-
-[role_policy]
-owner = "Bot 为本群群主：跳过插件侧保护名单与每日限额限制，仍以真实证据与平台接口返回为准。"
-admin = "Bot 为本群管理员：严格遵循保护名单、豁免名单、禁言冷却、时长上限、每日配额与处罚阶梯。"
-member = "Bot 当前为普通成员：无写管理权限，仅可查询，不得执行写操作。"
+# Deterministic notices and pure-code output guardrail patterns.
 
 [reply_guard]
+max_reply_chars = 200
 fake_claim_patterns = [
   '已解禁|已解除\S{0,12}?禁言',
   '已将\S{0,16}?禁言|已把\S{0,16}?禁言|已禁言',
@@ -34,7 +30,7 @@ legit_reason_flags = [
 ]
 
 [fallback]
-denied = "权限不足，无法执行该管理命令。"
+denied = "权限不足，无法执行该管理操作。"
 bot_not_admin = "Bot 当前不是本群管理员或群主，无法执行管理操作。"
 admin_status = """群 {group_id} 管理状态
 Bot 身份：{bot_role}
@@ -42,15 +38,20 @@ Bot 身份：{bot_role}
 今日计数：禁言 {mute_count}/{mute_limit}，踢出 {kick_count}/{kick_limit}，入群通过 {approve_count}/{approve_limit}，拒绝 {reject_count}/{reject_limit}"""
 admin_on = "已开启群 {group_id} 的自动群管。"
 admin_off = "已暂停群 {group_id} 的自动群管。"
+groups_empty = "当前尚无已单独登记的群配置（新群默认开关：{default_mode}）。"
+groups_header = "已登记群列表（共 {count} 个，新群默认开关：{default_mode}）："
 config_updated = "已更新群 {group_id} 配置 {target} = {value}。"
+config_reset = "已重置群 {group_id} 配置 {target} 为全局默认值。"
 invalid_duration = "无法识别的禁言时长：{raw}。"
 member_welcome = "欢迎 {member_id} 加入本群，请遵守群规。"
-exempt_added = "已将 {member_id} 加入本群豁免名单。"
-exempt_removed = "已将 {member_id} 移出本群豁免名单。"
+exempt_added = "已将 {member_id} 加入群 {group_id} 豁免名单。"
+exempt_removed = "已将 {member_id} 移出群 {group_id} 豁免名单。"
 log_empty = "群 {group_id} 暂无群管操作记录。"
 log_header = "群 {group_id} 最近 {count} 条操作记录："
 warn_done = "已提醒 {member_id}（{category}）：{reason}{extra}"
 warn_threshold_hint = "（窗口内已达 {current}/{threshold} 次）"
+warn_escalated_hint = "（窗口内已达 {current}/{threshold} 次，自动升级：{detail}）"
+flood_reason = "高频刷屏/复读触发限流"
 mute_done = "已禁言 {member_id} {duration}（{reason}）"
 unmute_done = "已解除 {member_id} 的禁言。"
 kick_done = "已移出 {member_id}（拉黑={blacklist}，{reason}）"

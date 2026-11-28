@@ -4,6 +4,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from qq_admin.exception import ConfigError
 from qq_admin.store import CONFIG_STORE, ConfigStore, parse_field_value
 
 from .audit import AUDIT, AuditModule
@@ -56,9 +57,18 @@ class EscalationModule:
         current[key] = parse_field_value(EscalationConfig, key, raw_value)
         validated = EscalationConfig.model_validate(current)
         self._store.save_section(
-            "escalation", validated.model_dump(), group_id=group_id
+            "escalation",
+            validated.model_dump(),
+            group_id=group_id,
+            defaults=EscalationConfig().model_dump(),
         )
         return validated
+
+    def reset_config(self, group_id: str, key: str | None = None) -> EscalationConfig:
+        if key and key not in EscalationConfig.model_fields:
+            raise ConfigError(f"Unknown config field: {key}")
+        self._store.reset_section("escalation", key, group_id=group_id)
+        return self.config(group_id)
 
     def resolve_step(self, group_id: str, member_id: str) -> EscalationRule | None:
         cfg = self.config(group_id)

@@ -1,11 +1,11 @@
-"""ServiceManager: global MANAGER holding shared Jev & OpenAI Responses models."""
+"""ServiceManager: global MANAGER holding shared Jev & ReplyAgent clients."""
 
 from typing import Any
 
 from openai import AsyncOpenAI
 
 from qq_admin.config import Config
-from qq_admin.models import AsyncTypeSafeClient, DecisionAgent, Jev, ReplyAgent
+from qq_admin.models import AsyncTypeSafeClient, Jev, ReplyAgent
 from qq_admin.store import CONFIG_STORE, ConfigStore
 
 
@@ -20,7 +20,7 @@ def _build_openai_client(cfg: Config) -> AsyncOpenAI | None:
 
 
 class ServiceManager:
-    """Holds base Config, shared Jev/OpenAI clients, and both Responses agents."""
+    """Holds base Config, shared Jev/OpenAI clients, and multi-group switch."""
 
     def __init__(
         self,
@@ -65,15 +65,19 @@ class ServiceManager:
         self._openai_client = openai_client or _build_openai_client(config)
 
         self.jev = Jev(config, client=jev_client)
-        self.decision_agent = DecisionAgent(config, client=self._openai_client)
         self.reply_agent = ReplyAgent(config, client=self._openai_client)
         return self
 
     def is_group_enabled(self, group_id: str) -> bool:
-        return CONFIG_STORE.is_group_enabled(group_id)
+        return CONFIG_STORE.is_group_enabled(
+            group_id, default=self.config.default_group_enabled
+        )
 
     def set_group_enabled(self, group_id: str, enabled: bool) -> None:
         CONFIG_STORE.set_group_enabled(group_id, enabled)
+
+    def managed_groups(self) -> list[str]:
+        return CONFIG_STORE.known_groups()
 
     async def shutdown(self) -> None:
         await self.jev.close()

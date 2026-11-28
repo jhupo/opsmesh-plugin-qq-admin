@@ -8,7 +8,7 @@ ReasoningEffort = Literal["none", "minimal", "low", "medium", "high"]
 
 
 class Config(BaseModel):
-    """Minimal startup configuration for Jev and OpenAI Responses agents."""
+    """Minimal startup configuration for Jev, ReplyAgent, and multi-group policy."""
 
     model_config = ConfigDict(extra="ignore")
 
@@ -18,8 +18,8 @@ class Config(BaseModel):
     openai_base_url: str = ""
     model: str = "gpt-5-mini"
     reasoning_effort: ReasoningEffort = "low"
-    max_turns: int = Field(default=6, ge=1, le=16)
     timeout_seconds: float = Field(default=30.0, gt=0)
+    default_group_enabled: bool = False
     config_path: str = ""
 
 
