@@ -1,4 +1,4 @@
-"""Tests for Config, Claude-style Markdown prompts, and module-owned configs."""
+"""Tests for Config, pure Markdown prompts, and module-owned configs."""
 
 from pathlib import Path
 
@@ -7,7 +7,6 @@ import pytest
 import qq_admin
 from qq_admin import (
     APPROVAL,
-    CATALOG,
     MANAGER,
     PROMPTS_DIR,
     SAFEGUARD,
@@ -15,6 +14,8 @@ from qq_admin import (
     Config,
     ConfigError,
     ConfigStore,
+    load_md,
+    load_toml,
 )
 
 EXPECTED_SAFETY_CATEGORIES = set(SAFETY_FIELDS)
@@ -35,13 +36,17 @@ def test_config_defaults_and_markdown_prompts() -> None:
 
     assert PROMPTS_DIR.is_dir()
     for fname in ("reply_agent.md", "decision_auto.md", "decision_admin.md"):
-        assert (PROMPTS_DIR / fname).is_file()
+        content = (PROMPTS_DIR / fname).read_text(encoding="utf-8")
+        assert "<role>" not in content
+        assert "<context>" not in content
+        assert "## " in content
 
-    assert set(CATALOG.jev_questions().keys()) == EXPECTED_SAFETY_CATEGORIES
-    assert CATALOG.jev_severity_criteria()
+    jev_data = load_toml("jev.toml")
+    assert set(jev_data["questions"].keys()) == EXPECTED_SAFETY_CATEGORIES
+    assert jev_data["severity_criteria"]
 
-    # Verify all 3 Markdown prompt templates format cleanly with XML tags & examples
-    reply_rendered = CATALOG.reply_prompt(
+    reply_rendered = load_md(
+        "reply_agent.md",
         group_id="G1",
         bot_role="admin",
         scenario="auto_moderation",
@@ -54,12 +59,11 @@ def test_config_defaults_and_markdown_prompts() -> None:
         kick_count=0,
         kick_limit=3,
     )
-    assert "<role>" in reply_rendered
-    assert "<persona>" in reply_rendered
-    assert "<examples>" in reply_rendered
+    assert "G1" in reply_rendered
+    assert "advertising" in reply_rendered
 
-    auto_rendered = CATALOG.decision_prompt(
-        "auto_moderate",
+    auto_rendered = load_md(
+        "decision_auto.md",
         group_id="G1",
         bot_role="admin",
         role_policy="admin policy",
@@ -68,19 +72,17 @@ def test_config_defaults_and_markdown_prompts() -> None:
         recent_ops=0,
         jev_summary="categories=['advertising']",
     )
-    assert "<tools>" in auto_rendered
-    assert "<examples>" in auto_rendered
+    assert "warn_member" in auto_rendered
 
-    admin_rendered = CATALOG.decision_prompt(
-        "admin_command",
+    admin_rendered = load_md(
+        "decision_admin.md",
         group_id="G1",
         bot_role="owner",
         role_policy="owner policy",
         member_id="ADMIN_1",
         sender_role="owner",
     )
-    assert "<tools>" in admin_rendered
-    assert "<examples>" in admin_rendered
+    assert "list_muted_members" in admin_rendered
 
 
 def test_module_owned_config_persistence_and_group_isolation(tmp_path: Path) -> None:

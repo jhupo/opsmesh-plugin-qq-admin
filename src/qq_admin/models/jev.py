@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from typesafe_sdk import AsyncTypeSafeClient, Content, Image, Noul, Score
 
 from qq_admin.config import Config
-from qq_admin.prompts import PromptCatalog
+from qq_admin.prompts import load_toml
 
 _IMAGE_HEADERS = {"TypeSafe-Danger-Zone-Images": "true"}
 
@@ -103,21 +103,20 @@ class Jev:
     def __init__(
         self,
         config: Config,
-        catalog: PromptCatalog,
         *,
         client: AsyncTypeSafeClient | None = None,
     ) -> None:
         self.config = config
-        self._catalog = catalog
         self._client = client
         self._owns_client = client is None
+        jev_data = load_toml("jev.toml")
         self._category_questions: dict[str, Noul] = {
             name: Noul(instructions=inst)
-            for name, inst in catalog.jev_questions().items()
+            for name, inst in jev_data.get("questions", {}).items()
         }
         self._severity_question = Score(
-            instructions=catalog.jev_severity_instructions(),
-            criteria=catalog.jev_severity_criteria(),
+            instructions=str(jev_data.get("severity_instructions", "")),
+            criteria=list(jev_data.get("severity_criteria", [])),
         )
 
     @property

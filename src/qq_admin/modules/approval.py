@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 from qq import Gateway, JoinRequest
 
 from qq_admin.manager import MANAGER
-from qq_admin.prompts import CATALOG
+from qq_admin.prompts import load_toml, notice
 from qq_admin.store import CONFIG_STORE, ConfigStore, parse_field_value
 
 from .audit import AUDIT, AuditRecord
@@ -60,7 +60,11 @@ class ApprovalModule:
                 "qa_pairs": qa_pairs,
                 "risk_tips": request.risk_tips or "",
             },
-            CATALOG.jev_join("is_risky_instructions"),
+            str(
+                load_toml("jev_guards.toml")
+                .get("join_request", {})
+                .get("is_risky_instructions", "")
+            ),
         )
 
     async def approve(
@@ -83,7 +87,7 @@ class ApprovalModule:
         return ActionOutcome(
             succeeded=True,
             action="approve",
-            message=CATALOG.format_fallback(
+            message=notice(
                 "approve_done", request_id=request_id or "-", member_id=member_id
             ),
         )
@@ -115,7 +119,7 @@ class ApprovalModule:
         return ActionOutcome(
             succeeded=True,
             action="reject",
-            message=CATALOG.format_fallback(
+            message=notice(
                 "reject_done",
                 request_id=request_id or "-",
                 member_id=member_id,
@@ -135,16 +139,16 @@ class ApprovalModule:
             return None
 
         decision = cfg.default_action
-        reason = CATALOG.format_fallback("auto_approve_reason")
+        reason = notice("auto_approve_reason")
         if cfg.reject_on_risk_tips and request.risk_tips:
-            decision, reason = "reject", CATALOG.format_fallback("auto_reject_risk")
+            decision, reason = "reject", notice("auto_reject_risk")
         elif cfg.use_jev_review and MANAGER.jev.is_ready:
             try:
                 risky = await self.risk_probability(group_id, request)
             except Exception:
                 risky = 0.0
             if risky >= cfg.reject_threshold:
-                decision, reason = "reject", CATALOG.format_fallback("auto_reject_jev")
+                decision, reason = "reject", notice("auto_reject_jev")
 
         if decision == "ignore" or self._over_daily_limit(
             group_id, decision, cfg, owner=bot_role == "owner"
@@ -187,7 +191,7 @@ class ApprovalModule:
         return ActionOutcome(
             succeeded=False,
             action=action,
-            message=CATALOG.format_fallback("action_failed", reason=exc),
+            message=notice("action_failed", reason=exc),
         )
 
     def _audit(

@@ -126,14 +126,12 @@ async def test_stateless_decision_and_reply_agents_with_guardrails(
         gateway=gateway,
         group_id="G1",
         member_id="U1",
-        message_id="M1",
-        message_text="spam spam spam",
-        bot_role="admin",
-        sender_role="member",
         mode="auto_moderate",
     )
 
-    outcome = await MANAGER.decision_agent.execute("moderate this", context=turn)
+    outcome = await MANAGER.decision_agent.execute(
+        "moderate this", context=turn, bot_role="admin", sender_role="member"
+    )
     assert outcome.action_taken is True
     assert outcome.executed_actions == ["mute"]
     assert captured_agents[-1].model_settings.reasoning.effort == "low"

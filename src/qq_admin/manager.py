@@ -6,7 +6,6 @@ from openai import AsyncOpenAI
 
 from qq_admin.config import Config
 from qq_admin.models import AsyncTypeSafeClient, DecisionAgent, Jev, ReplyAgent
-from qq_admin.prompts import CATALOG
 from qq_admin.store import CONFIG_STORE, ConfigStore
 
 
@@ -31,7 +30,6 @@ class ServiceManager:
         jev_client: AsyncTypeSafeClient | None = None,
         openai_client: AsyncOpenAI | None = None,
     ) -> None:
-        self.catalog = CATALOG
         self.store = CONFIG_STORE
         self._owns_openai = False
         self._openai_client: AsyncOpenAI | None = None
@@ -66,7 +64,7 @@ class ServiceManager:
         self._owns_openai = openai_client is None
         self._openai_client = openai_client or _build_openai_client(config)
 
-        self.jev = Jev(config, CATALOG, client=jev_client)
+        self.jev = Jev(config, client=jev_client)
         self.decision_agent = DecisionAgent(config, client=self._openai_client)
         self.reply_agent = ReplyAgent(config, client=self._openai_client)
         return self

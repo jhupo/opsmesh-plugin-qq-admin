@@ -16,7 +16,7 @@ from qq_admin.modules import (
     SAFEGUARD,
     get_module,
 )
-from qq_admin.prompts import CATALOG
+from qq_admin.prompts import notice
 
 from .helpers import command_args, compose_reply, finish_outcome, require_admin
 
@@ -43,7 +43,7 @@ async def handle_admin_status(
     safeguard = SAFEGUARD.config(group_id)
     approval = APPROVAL.config(group_id)
     counts = SAFEGUARD.daily_counts(group_id)
-    notice = CATALOG.format_fallback(
+    fallback = notice(
         "admin_status",
         group_id=group_id,
         bot_role=bot_role,
@@ -61,7 +61,7 @@ async def handle_admin_status(
         gateway,
         event,
         scenario="admin_status",
-        fallback=notice,
+        fallback=fallback,
         facts={"group_id": group_id, "enabled": enabled, "daily": counts},
     )
     await matcher.finish(reply)
@@ -79,7 +79,7 @@ async def handle_admin_on(
         gateway,
         event,
         scenario="admin_on",
-        fallback=CATALOG.format_fallback("admin_on", group_id=group_id),
+        fallback=notice("admin_on", group_id=group_id),
         facts={"group_id": group_id, "enabled": True},
     )
     await matcher.finish(reply)
@@ -97,7 +97,7 @@ async def handle_admin_off(
         gateway,
         event,
         scenario="admin_off",
-        fallback=CATALOG.format_fallback("admin_off", group_id=group_id),
+        fallback=notice("admin_off", group_id=group_id),
         facts={"group_id": group_id, "enabled": False},
     )
     await matcher.finish(reply)
@@ -128,7 +128,7 @@ async def handle_admin_config(
             raw_val = " ".join(args[2:])
             updated = get_module(mod_name).update_config(group_id, field_name, raw_val)
             await matcher.finish(
-                CATALOG.format_fallback(
+                notice(
                     "config_updated",
                     group_id=group_id,
                     target=args[1],
@@ -151,10 +151,8 @@ async def handle_admin_log(
     limit = int(args[0]) if args and args[0].isdigit() else None
     records = AUDIT.recent_logs(group_id, limit=limit)
     if not records:
-        await matcher.finish(CATALOG.format_fallback("log_empty", group_id=group_id))
-    header = CATALOG.format_fallback(
-        "log_header", group_id=group_id, count=len(records)
-    )
+        await matcher.finish(notice("log_empty", group_id=group_id))
+    header = notice("log_header", group_id=group_id, count=len(records))
     lines = [
         f"- [{r.action}] {r.target_id} by {r.operator_id} ok={r.succeeded} ({r.reason})"
         for r in records
@@ -188,7 +186,7 @@ async def handle_admin_exempt(
         await matcher.finish("Usage: /admin exempt <member>")
     member_id = args[0].lstrip("@")
     SAFEGUARD.add_exempt(event.group_openid, member_id)
-    await matcher.finish(CATALOG.format_fallback("exempt_added", member_id=member_id))
+    await matcher.finish(notice("exempt_added", member_id=member_id))
 
 
 @admin_unexempt_cmd.handle()
@@ -201,7 +199,7 @@ async def handle_admin_unexempt(
         await matcher.finish("Usage: /admin unexempt <member>")
     member_id = args[0].lstrip("@")
     SAFEGUARD.remove_exempt(event.group_openid, member_id)
-    await matcher.finish(CATALOG.format_fallback("exempt_removed", member_id=member_id))
+    await matcher.finish(notice("exempt_removed", member_id=member_id))
 
 
 @admin_undo_cmd.handle()

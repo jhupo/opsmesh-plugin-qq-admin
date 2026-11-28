@@ -24,7 +24,7 @@ from qq_admin.modules import (
     WARNING,
     AuditRecord,
 )
-from qq_admin.prompts import CATALOG
+from qq_admin.prompts import notice
 
 group_notice = on_notice(priority=5, block=False)
 
@@ -89,7 +89,7 @@ async def process_group_event(gateway: Gateway, event: GroupNoticeEvent) -> str 
                 bot_role=await IDENTITY.bot_role(gateway, group_id),
                 scenario="member_welcome",
                 target_id=member_id,
-                fallback=CATALOG.format_fallback("member_welcome", member_id=member_id),
+                fallback=notice("member_welcome", member_id=member_id),
             )
         )
     if isinstance(event, GroupMemberRemoveEvent):

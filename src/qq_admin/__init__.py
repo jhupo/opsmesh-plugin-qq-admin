@@ -110,8 +110,9 @@ from .modules import format_duration as format_duration
 from .modules import get_module as get_module
 from .modules import parse_duration as parse_duration
 from .modules import reset_modules as reset_modules
-from .prompts import CATALOG as CATALOG
 from .prompts import PROMPTS_DIR as PROMPTS_DIR
-from .prompts import PromptCatalog as PromptCatalog
+from .prompts import load_md as load_md
+from .prompts import load_toml as load_toml
+from .prompts import notice as notice
 from .store import CONFIG_STORE as CONFIG_STORE
 from .store import ConfigStore as ConfigStore

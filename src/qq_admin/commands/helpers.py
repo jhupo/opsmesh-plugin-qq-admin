@@ -8,7 +8,7 @@ from qq import Gateway, GroupMessageEvent
 from qq_admin.manager import MANAGER
 from qq_admin.models import ReplySpec
 from qq_admin.modules import IDENTITY, ActionOutcome
-from qq_admin.prompts import CATALOG
+from qq_admin.prompts import notice
 
 
 def command_args(event: GroupMessageEvent, prefix_words: int = 1) -> list[str]:
@@ -64,7 +64,7 @@ async def require_admin(
             gateway,
             event,
             scenario="permission_denied",
-            fallback=CATALOG.format_fallback("denied"),
+            fallback=notice("denied"),
             facts={"command": command_name},
         )
         await matcher.finish(reply)

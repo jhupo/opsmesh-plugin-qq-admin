@@ -15,7 +15,7 @@ from openai import AsyncOpenAI
 from openai.types.shared import Reasoning
 
 from qq_admin.config import Config
-from qq_admin.prompts import CATALOG
+from qq_admin.prompts import load_md
 
 from .guardrails import reply_guardrail
 
@@ -66,7 +66,8 @@ class ReplyAgent:
 
         sg_cfg = SAFEGUARD.config(spec.group_id)
         daily = SAFEGUARD.daily_counts(spec.group_id)
-        instructions = CATALOG.reply_prompt(
+        instructions = load_md(
+            "reply_agent.md",
             group_id=spec.group_id,
             bot_role=spec.bot_role,
             scenario=spec.scenario,

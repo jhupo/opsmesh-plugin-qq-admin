@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 from qq import Gateway
 
 from qq_admin.config import Config
-from qq_admin.prompts import CATALOG
+from qq_admin.prompts import load_md, load_toml
 
 from .guardrails import injection_guardrail
 from .jev import SafetyReport
@@ -25,17 +25,12 @@ from .tools import GROUP_ADMIN_TOOLS
 
 @dataclass(slots=True)
 class TurnContext:
-    """Mutable per-turn context injected into DecisionAgent tools and guardrails."""
+    """Minimal per-turn state shared with DecisionAgent tools and guardrails."""
 
     gateway: Gateway
     group_id: str
     member_id: str
-    message_id: str
-    message_text: str
-    bot_role: str
-    sender_role: str
-    mode: Literal["auto_moderate", "admin_command"]
-    jev_summary: str = ""
+    mode: Literal["auto_moderate", "admin_command"] = "auto_moderate"
     report: SafetyReport | None = None
     executed_actions: list[str] = field(default_factory=list)
     tool_outputs: list[str] = field(default_factory=list)
@@ -76,7 +71,14 @@ class DecisionAgent:
             temperature=0.0, reasoning=Reasoning(effort=self.config.reasoning_effort)
         )
 
-    async def execute(self, prompt: str, *, context: TurnContext) -> DecisionOutcome:
+    async def execute(
+        self,
+        prompt: str,
+        *,
+        context: TurnContext,
+        bot_role: str = "admin",
+        sender_role: str = "member",
+    ) -> DecisionOutcome:
         """Execute one stateless moderation decision turn via Responses API."""
         if self._client is None:
             return DecisionOutcome(
@@ -88,18 +90,25 @@ class DecisionAgent:
 
         from qq_admin.modules.audit import AUDIT
 
-        recent_ops = AUDIT.count_member_actions(
-            context.group_id, context.member_id, within_hours=24.0
+        role_policy = str(
+            load_toml("notices.toml").get("role_policy", {}).get(bot_role, "")
         )
-        instructions = CATALOG.decision_prompt(
-            context.mode,
+        template_name = (
+            "decision_admin.md"
+            if context.mode == "admin_command"
+            else "decision_auto.md"
+        )
+        instructions = load_md(
+            template_name,
             group_id=context.group_id,
-            bot_role=context.bot_role,
-            role_policy=CATALOG.role_policy(context.bot_role),
+            bot_role=bot_role,
+            role_policy=role_policy,
             member_id=context.member_id,
-            sender_role=context.sender_role,
-            recent_ops=recent_ops,
-            jev_summary=context.jev_summary,
+            sender_role=sender_role,
+            recent_ops=AUDIT.count_member_actions(
+                context.group_id, context.member_id, within_hours=24.0
+            ),
+            jev_summary=context.report.summary() if context.report else "none",
         )
 
         agent = Agent[TurnContext](

@@ -15,7 +15,7 @@ from agents import (
     tool_input_guardrail,
 )
 
-from qq_admin.prompts import CATALOG
+from qq_admin.prompts import load_toml
 
 from .jev import ATTACK_FIELDS, CRITICAL_FIELDS
 
@@ -97,16 +97,18 @@ async def action_guardrail(data: ToolInputGuardrailData) -> ToolGuardrailFunctio
     except json.JSONDecodeError:
         arguments = {"raw": data.context.tool_arguments}
 
+    instructions = str(
+        load_toml("jev_guards.toml").get("guards", {}).get("moderation_validity", "")
+    )
     validity = await MANAGER.jev.probability(
         {
             "proposal": {"tool": data.context.tool_name, "arguments": arguments},
             "evidence": {
                 "member_id": turn.member_id,
-                "message": turn.message_text[:2000],
-                "jev": turn.jev_summary,
+                "jev": turn.report.summary() if turn.report else "none",
             },
         },
-        CATALOG.jev_guard("moderation_validity"),
+        instructions,
     )
     if validity < cfg.action_validity_threshold:
         return ToolGuardrailFunctionOutput.reject_content(
@@ -130,15 +132,16 @@ async def reply_guardrail(
     if not text:
         return _pass(empty=True)
 
+    guard_cfg = load_toml("notices.toml").get("reply_guard", {})
     if not spec.executed_actions and _claims_unexecuted_action(
-        text, CATALOG.fake_claim_patterns()
+        text, list(guard_cfg.get("fake_claim_patterns", []))
     ):
         return _trip(reason="hallucinated_action_claim")
     if _denies_real_permission(
         text,
         bot_role=spec.bot_role,
-        deny_flags=CATALOG.fake_deny_flags(),
-        legit_flags=CATALOG.legit_reason_flags(),
+        deny_flags=list(guard_cfg.get("fake_deny_flags", [])),
+        legit_flags=list(guard_cfg.get("legit_reason_flags", [])),
     ):
         return _trip(reason="false_permission_denial")
 
