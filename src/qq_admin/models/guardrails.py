@@ -15,6 +15,10 @@ from agents import (
     tool_input_guardrail,
 )
 
+from .jev import ATTACK_FIELDS, CRITICAL_FIELDS
+
+_REPLY_SAFETY_FIELDS = (*CRITICAL_FIELDS, "pii", "unethical_behavior")
+
 
 def _as_text(payload: Any) -> str:
     if isinstance(payload, list):
@@ -48,23 +52,30 @@ def _trip(**info: Any) -> GuardrailFunctionOutput:
 async def injection_guardrail(
     ctx: RunContextWrapper[Any], agent: Agent[Any], user_input: str | list[Any]
 ) -> GuardrailFunctionOutput:
-    """Block prompt-injection or privilege-spoofing attempts before a turn."""
+    """Block prompt-injection/jailbreak, reusing precomputed SafetyReport if any."""
     del agent
     turn = ctx.context
     manager = turn.manager
-    if turn.mode == "admin_command" or not manager.jev.is_ready:
+    if turn.mode == "admin_command":
         return _pass(skipped=True)
-    prob = await manager.jev.probability(
-        {"input": _as_text(user_input)[:2000]},
-        manager.catalog.jev_guard("input_injection"),
-    )
-    threshold = manager.moderation.config(turn.group_id).injection_block_threshold
-    return _trip(injection=prob) if prob >= threshold else _pass(injection=prob)
+
+    threshold = manager.moderation.config(turn.group_id).attack_threshold
+    report = turn.report
+    if report is None:
+        if not manager.jev.is_ready:
+            return _pass(skipped=True)
+        report = await manager.jev.execute(
+            text=_as_text(user_input)[:2000],
+            categories=ATTACK_FIELDS,
+            include_severity=False,
+        )
+    risk = report.max_attack_risk
+    return _trip(attack=risk) if risk >= threshold else _pass(attack=risk)
 
 
 @tool_input_guardrail
 async def action_guardrail(data: ToolInputGuardrailData) -> ToolGuardrailFunctionOutput:
-    """Second-check every punitive tool call against the evidence via Jev."""
+    """Optional second-check verifying a punitive tool call matches the evidence."""
     turn = data.context.context
     manager = turn.manager
     cfg = manager.moderation.config(turn.group_id)
@@ -103,7 +114,7 @@ async def action_guardrail(data: ToolInputGuardrailData) -> ToolGuardrailFunctio
 async def reply_guardrail(
     ctx: RunContextWrapper[Any], agent: Agent[Any], agent_output: Any
 ) -> GuardrailFunctionOutput:
-    """Block hallucinated action claims, false denials, or unsafe replies."""
+    """Block hallucinated action claims, false denials, or unsafe replies via Jev."""
     del agent
     spec = ctx.context
     manager = spec.manager
@@ -125,11 +136,14 @@ async def reply_guardrail(
         return _trip(reason="false_permission_denial")
 
     if manager.jev.is_ready:
-        prob = await manager.jev.probability(
-            {"output": text[:1000]}, catalog.jev_guard("output_safety")
+        report = await manager.jev.execute(
+            text=text[:1000],
+            categories=_REPLY_SAFETY_FIELDS,
+            include_severity=False,
         )
-        if prob >= manager.moderation.config(spec.group_id).output_safety_threshold:
-            return _trip(reason="unsafe_reply", probability=prob)
+        threshold = manager.moderation.config(spec.group_id).output_safety_threshold
+        if report.max_risk >= threshold:
+            return _trip(reason="unsafe_reply", risk=report.max_risk)
     return _pass(safe=True)
 
 

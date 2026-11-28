@@ -12,29 +12,27 @@ from qq_admin.prompts import PromptCatalog
 
 _IMAGE_HEADERS = {"TypeSafe-Danger-Zone-Images": "true"}
 
-SAFETY_FIELDS: tuple[str, ...] = (
+CRITICAL_FIELDS: tuple[str, ...] = (
     "violence",
     "sexual_content",
     "suicide_self_harm",
     "political_sensitive",
+)
+ATTACK_FIELDS: tuple[str, ...] = (
     "jailbreak",
+    "prompt_injection",
+)
+ORDER_FIELDS: tuple[str, ...] = (
     "non_violent_crime",
     "pii",
     "unethical_behavior",
     "copyright_infringement",
     "advertising",
-    "prompt_injection",
 )
+SAFETY_FIELDS: tuple[str, ...] = CRITICAL_FIELDS + ATTACK_FIELDS + ORDER_FIELDS
 
 _AD_FIELDS = {"advertising", "copyright_infringement", "non_violent_crime"}
-_ABUSE_FIELDS = {
-    "violence",
-    "sexual_content",
-    "suicide_self_harm",
-    "political_sensitive",
-    "pii",
-    "unethical_behavior",
-}
+_ABUSE_FIELDS = set(CRITICAL_FIELDS) | {"pii", "unethical_behavior"}
 
 
 class SafetyReport(BaseModel):
@@ -53,11 +51,18 @@ class SafetyReport(BaseModel):
     prompt_injection: float = 0.0
     severity: int = 0
 
-    def scores(self) -> dict[str, float]:
-        return {name: float(getattr(self, name)) for name in SAFETY_FIELDS}
+    def scores(self, fields: Sequence[str] | None = None) -> dict[str, float]:
+        names = fields if fields is not None else SAFETY_FIELDS
+        return {
+            name: float(getattr(self, name)) for name in names if name in SAFETY_FIELDS
+        }
 
-    def triggered(self, threshold: float = 0.70) -> list[str]:
-        return [name for name, score in self.scores().items() if score >= threshold]
+    def triggered(
+        self, threshold: float = 0.70, fields: Sequence[str] | None = None
+    ) -> list[str]:
+        return [
+            name for name, score in self.scores(fields).items() if score >= threshold
+        ]
 
     @property
     def primary_category(self) -> str:
@@ -67,6 +72,10 @@ class SafetyReport(BaseModel):
     @property
     def max_risk(self) -> float:
         return max(self.scores().values())
+
+    @property
+    def max_attack_risk(self) -> float:
+        return max(self.jailbreak, self.prompt_injection)
 
     @property
     def warning_category(self) -> Literal["spam", "abuse", "ad"]:
@@ -84,7 +93,7 @@ class SafetyReport(BaseModel):
         hits = self.triggered(threshold)
         return (
             f"categories={hits or ['none']}, severity={self.severity}, "
-            f"max_risk={self.max_risk:.2f}, injection={self.prompt_injection:.2f}"
+            f"max_risk={self.max_risk:.2f}, attack={self.max_attack_risk:.2f}"
         )
 
 
@@ -102,16 +111,14 @@ class Jev:
         self._catalog = catalog
         self._client = client
         self._owns_client = client is None
-        self._questions: dict[str, Noul | Score] = {
-            **{
-                name: Noul(instructions=inst)
-                for name, inst in catalog.jev_questions().items()
-            },
-            "severity": Score(
-                instructions=catalog.jev_severity_instructions(),
-                criteria=catalog.jev_severity_criteria(),
-            ),
+        self._category_questions: dict[str, Noul] = {
+            name: Noul(instructions=inst)
+            for name, inst in catalog.jev_questions().items()
         }
+        self._severity_question = Score(
+            instructions=catalog.jev_severity_instructions(),
+            criteria=catalog.jev_severity_criteria(),
+        )
 
     @property
     def is_ready(self) -> bool:
@@ -128,12 +135,31 @@ class Jev:
             self._owns_client = True
         return self._client
 
+    def _select_questions(
+        self,
+        *,
+        categories: Sequence[str] | None,
+        has_text_or_urls: bool,
+        include_severity: bool,
+    ) -> dict[str, Noul | Score]:
+        wanted = set(categories) if categories is not None else set(SAFETY_FIELDS)
+        if not has_text_or_urls:
+            wanted -= set(ATTACK_FIELDS)
+        questions: dict[str, Noul | Score] = {
+            name: q for name, q in self._category_questions.items() if name in wanted
+        }
+        if include_severity and questions:
+            questions["severity"] = self._severity_question
+        return questions
+
     async def execute(
         self,
         *,
         text: str = "",
         images: Sequence[bytes | Path] | None = None,
         urls: Sequence[str] | None = None,
+        categories: Sequence[str] | None = None,
+        include_severity: bool = True,
     ) -> SafetyReport:
         """Classify text, images, text+images, or links into a SafetyReport."""
         if not self.is_ready:
@@ -143,6 +169,14 @@ class Jev:
         clean_urls = [u.strip() for u in (urls or []) if u and u.strip()]
         assets = {f"img_{i}": Image(raw) for i, raw in enumerate(images or [], start=1)}
         if not clean_text and not clean_urls and not assets:
+            return SafetyReport()
+
+        questions = self._select_questions(
+            categories=categories,
+            has_text_or_urls=bool(clean_text or clean_urls),
+            include_severity=include_severity,
+        )
+        if not questions:
             return SafetyReport()
 
         state: dict[str, Any] = {}
@@ -155,7 +189,7 @@ class Jev:
 
         resp = await self._get_client().system_one(
             state=state,
-            questions=self._questions,
+            questions=questions,
             model=self.config.jev_model,
             assets=assets or None,
         )
@@ -170,7 +204,7 @@ class Jev:
         return SafetyReport.model_validate(values)
 
     async def probability(self, state: Content, instructions: str) -> float:
-        """Run a single Noul check for guardrails or join-request review."""
+        """Run a single Noul check for join-request review or optional tool judge."""
         resp = await self._get_client().system_one(
             state=state,
             questions={"answer": Noul(instructions=instructions)},
@@ -184,4 +218,12 @@ class Jev:
             self._client = None
 
 
-__all__ = ["SAFETY_FIELDS", "AsyncTypeSafeClient", "Jev", "SafetyReport"]
+__all__ = [
+    "ATTACK_FIELDS",
+    "CRITICAL_FIELDS",
+    "ORDER_FIELDS",
+    "SAFETY_FIELDS",
+    "AsyncTypeSafeClient",
+    "Jev",
+    "SafetyReport",
+]

@@ -32,10 +32,13 @@ def test_config_defaults_and_prompts_folder() -> None:
         assert not tool.name.startswith("tool_")
 
     assert PROMPTS_DIR.is_dir()
+    assert (PROMPTS_DIR / "reply_agent.md").is_file()
+    assert (PROMPTS_DIR / "decision_auto.md").is_file()
+    assert (PROMPTS_DIR / "decision_admin.md").is_file()
     catalog = PromptCatalog.load()
     assert set(catalog.jev_questions().keys()) == EXPECTED_SAFETY_CATEGORIES
     assert catalog.jev_severity_criteria()
-    assert catalog.composer_persona()
+    assert catalog.reply_template()
 
 
 def test_module_owned_config_persistence_and_group_isolation(tmp_path: Path) -> None:

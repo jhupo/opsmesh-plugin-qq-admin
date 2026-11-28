@@ -1,4 +1,4 @@
-"""System 2 Agent 2: ReplyAgent using OpenAI Responses API."""
+"""System 2 Agent 2: ReplyAgent rendering prompts/reply_agent.md via Responses API."""
 
 from dataclasses import dataclass, field
 import json
@@ -33,13 +33,14 @@ class ReplySpec:
     actor_id: str = ""
     actor_role: str = "member"
     target_id: str = ""
+    categories: list[str] = field(default_factory=list)
     executed_actions: list[str] = field(default_factory=list)
     facts: dict[str, Any] = field(default_factory=dict)
     fallback: str = ""
 
 
 class ReplyAgent:
-    """Stateless persona-driven reply composer over OpenAI Responses API."""
+    """Stateless persona-driven reply composer powered by reply_agent.md."""
 
     def __init__(
         self,
@@ -60,22 +61,20 @@ class ReplyAgent:
         )
 
     async def execute(self, spec: ReplySpec) -> str:
-        """Generate one natural group admin reply via Responses API."""
+        """Generate one natural, non-repetitive group admin reply."""
         if self._client is None:
             return spec.fallback
 
         sg_cfg = spec.manager.safeguard.config(spec.group_id)
         daily = spec.manager.safeguard.daily_counts(spec.group_id)
-        catalog = spec.manager.catalog
-        persona = catalog.composer_persona()
-        instructions = catalog.composer_instructions(
-            persona=persona,
+        instructions = spec.manager.catalog.reply_prompt(
             group_id=spec.group_id,
             bot_role=spec.bot_role,
             scenario=spec.scenario,
             actor_id=spec.actor_id or "unknown",
             actor_role=spec.actor_role,
             target_id=spec.target_id or "none",
+            categories=", ".join(spec.categories) if spec.categories else "none",
             mute_count=daily["mute"],
             mute_limit=sg_cfg.daily_mute_limit,
             kick_count=daily["kick"],
@@ -94,6 +93,7 @@ class ReplyAgent:
 
         payload = {
             "scenario": spec.scenario,
+            "categories": spec.categories,
             "executed_actions": spec.executed_actions,
             "facts": spec.facts,
         }

@@ -54,7 +54,10 @@ from .exception import QQAdminError as QQAdminError
 from .exception import SafeguardBlockedError as SafeguardBlockedError
 from .manager import ServiceManager as ServiceManager
 from .manager import manager as manager
+from .models import ATTACK_FIELDS as ATTACK_FIELDS
+from .models import CRITICAL_FIELDS as CRITICAL_FIELDS
 from .models import GROUP_ADMIN_TOOLS as GROUP_ADMIN_TOOLS
+from .models import ORDER_FIELDS as ORDER_FIELDS
 from .models import SAFETY_FIELDS as SAFETY_FIELDS
 from .models import AsyncTypeSafeClient as AsyncTypeSafeClient
 from .models import DecisionAgent as DecisionAgent

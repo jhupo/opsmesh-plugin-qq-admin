@@ -2,7 +2,15 @@
 
 from .decision_agent import DecisionAgent, DecisionOutcome, TurnContext
 from .guardrails import action_guardrail, injection_guardrail, reply_guardrail
-from .jev import SAFETY_FIELDS, AsyncTypeSafeClient, Jev, SafetyReport
+from .jev import (
+    ATTACK_FIELDS,
+    CRITICAL_FIELDS,
+    ORDER_FIELDS,
+    SAFETY_FIELDS,
+    AsyncTypeSafeClient,
+    Jev,
+    SafetyReport,
+)
 from .reply_agent import ReplyAgent, ReplySpec
 from .tools import (
     GROUP_ADMIN_TOOLS,
@@ -18,7 +26,10 @@ from .tools import (
 )
 
 __all__ = [
+    "ATTACK_FIELDS",
+    "CRITICAL_FIELDS",
     "GROUP_ADMIN_TOOLS",
+    "ORDER_FIELDS",
     "SAFETY_FIELDS",
     "AsyncTypeSafeClient",
     "DecisionAgent",

@@ -1,13 +1,23 @@
-"""Automatic moderation module: Jev SafetyReport, dual agents, and QQ v2 actions."""
+"""Automatic moderation: 3-channel Jev routing, dual agents, and QQ v2 actions."""
 
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import TYPE_CHECKING, Literal
+from urllib.parse import urlparse
 
 from pydantic import BaseModel, Field
 from qq import Gateway, SetMemberMuteState
 
-from qq_admin.models import DecisionOutcome, ReplySpec, SafetyReport, TurnContext
+from qq_admin.models import (
+    ATTACK_FIELDS,
+    CRITICAL_FIELDS,
+    ORDER_FIELDS,
+    SAFETY_FIELDS,
+    DecisionOutcome,
+    ReplySpec,
+    SafetyReport,
+    TurnContext,
+)
 from qq_admin.store import ConfigStore, parse_field_value
 
 from .audit import AuditRecord
@@ -17,20 +27,26 @@ if TYPE_CHECKING:
     from qq_admin.manager import ServiceManager
 
 WarningCategory = Literal["spam", "abuse", "ad"]
+RouteKind = Literal["allow", "attack", "critical_fast", "agent_review"]
 
 
 class ModerationConfig(BaseModel):
-    """Automatic moderation switches and calibrated Jev thresholds."""
+    """Per-group safety toggles, trusted domains, and 3-channel thresholds."""
 
     enabled: bool = True
     stop_on_violation: bool = True
     allow_admin_nl_control: bool = True
     welcome_new_members: bool = False
     enable_image_review: bool = True
-    enable_action_guardrail: bool = True
+    enable_action_guardrail: bool = False
     max_images: int = Field(default=4, ge=1, le=8)
-    injection_block_threshold: float = Field(default=0.80, ge=0.0, le=1.0)
-    warn_confidence: float = Field(default=0.70, ge=0.0, le=1.0)
+    disabled_categories: list[str] = Field(default_factory=list)
+    trusted_domains: list[str] = Field(
+        default_factory=lambda: ["github.com", "bilibili.com", "docs.python.org"]
+    )
+    critical_threshold: float = Field(default=0.60, ge=0.0, le=1.0)
+    attack_threshold: float = Field(default=0.75, ge=0.0, le=1.0)
+    order_threshold: float = Field(default=0.75, ge=0.0, le=1.0)
     enforce_confidence: float = Field(default=0.82, ge=0.0, le=1.0)
     action_validity_threshold: float = Field(default=0.75, ge=0.0, le=1.0)
     output_safety_threshold: float = Field(default=0.80, ge=0.0, le=1.0)
@@ -47,7 +63,7 @@ class ActionOutcome:
 
 
 class ModerationModule:
-    """Moderates group messages and executes Official QQ v2 admin actions."""
+    """Moderates group messages via 3-channel Jev routing and ReplyAgent replies."""
 
     def __init__(self, store: ConfigStore, manager: "ServiceManager") -> None:
         self._store = store
@@ -68,6 +84,51 @@ class ModerationModule:
         )
         return validated
 
+    def active_categories(self, group_id: str) -> list[str]:
+        disabled = set(self.config(group_id).disabled_categories)
+        return [name for name in SAFETY_FIELDS if name not in disabled]
+
+    def filter_urls(self, group_id: str, urls: list[str] | None) -> list[str]:
+        if not urls:
+            return []
+        trusted = tuple(d.lower() for d in self.config(group_id).trusted_domains)
+        filtered: list[str] = []
+        for url in urls:
+            host = (urlparse(url).hostname or "").lower()
+            if host and any(host == d or host.endswith(f".{d}") for d in trusted):
+                continue
+            filtered.append(url)
+        return filtered
+
+    def classify_route(
+        self, group_id: str, report: SafetyReport
+    ) -> tuple[RouteKind, list[str]]:
+        """Route a SafetyReport into allow, attack, critical_fast, or agent_review."""
+        cfg = self.config(group_id)
+        disabled = set(cfg.disabled_categories)
+
+        attack_fields = [f for f in ATTACK_FIELDS if f not in disabled]
+        attack_hits = report.triggered(cfg.attack_threshold, attack_fields)
+        if attack_hits:
+            return "attack", attack_hits
+
+        critical_fields = [f for f in CRITICAL_FIELDS if f not in disabled]
+        critical_hits = report.triggered(cfg.critical_threshold, critical_fields)
+        if critical_hits:
+            if (
+                report.severity >= 3
+                or max(report.scores(critical_hits).values()) >= 0.80
+            ):
+                return "critical_fast", critical_hits
+            return "agent_review", critical_hits
+
+        order_fields = [f for f in ORDER_FIELDS if f not in disabled]
+        order_hits = report.triggered(cfg.order_threshold, order_fields)
+        if order_hits and report.severity > 0:
+            return "agent_review", order_hits
+
+        return "allow", []
+
     async def assess(
         self,
         group_id: str,
@@ -76,14 +137,18 @@ class ModerationModule:
         images: list[bytes] | None = None,
         urls: list[str] | None = None,
     ) -> SafetyReport:
-        """Run stateless Jev.execute() on text, images, text+images, or links."""
+        """Run stateless Jev.execute() on enabled safety categories."""
         cfg = self.config(group_id)
         selected_images = (
             (images or [])[: cfg.max_images] if cfg.enable_image_review else None
         )
+        categories = self.active_categories(group_id)
         try:
             return await self._manager.jev.execute(
-                text=text, images=selected_images, urls=urls
+                text=text,
+                images=selected_images,
+                urls=self.filter_urls(group_id, urls),
+                categories=categories,
             )
         except Exception:
             return SafetyReport()
@@ -100,29 +165,40 @@ class ModerationModule:
         images: list[bytes] | None = None,
         urls: list[str] | None = None,
     ) -> tuple[bool, str | None]:
-        """Jev SafetyReport -> DecisionAgent -> ReplyAgent; silent on safe chat."""
+        """3-channel moderation: drop attacks, fast-path critical, review order hits."""
         cfg = self.config(group_id)
         if not cfg.enabled:
             return False, None
 
         report = await self.assess(group_id, text=text, images=images, urls=urls)
-        if report.prompt_injection >= cfg.injection_block_threshold:
+        route, hits = self.classify_route(group_id, report)
+        if route == "allow":
             return False, None
-        if not report.is_flagged(cfg.warn_confidence):
+
+        if route == "attack":
+            self._audit(
+                group_id,
+                "attack_blocked",
+                member_id,
+                "jev",
+                f"blocked {hits} (risk={report.max_attack_risk:.2f})",
+            )
             return False, None
 
         bot_role = await self._manager.identity.bot_role(gateway, group_id)
-        if not self._manager.decision_agent.is_ready:
-            return await self._enforce_without_agent(
+        if route == "critical_fast" or not self._manager.decision_agent.is_ready:
+            return await self._enforce_and_compose(
                 gateway,
                 group_id=group_id,
                 member_id=member_id,
                 message_id=message_id,
                 bot_role=bot_role,
                 report=report,
+                categories=hits,
+                fast_critical=(route == "critical_fast"),
             )
 
-        summary = report.summary(cfg.warn_confidence)
+        summary = report.summary(cfg.order_threshold)
         turn = TurnContext(
             gateway=gateway,
             manager=self._manager,
@@ -134,6 +210,7 @@ class ModerationModule:
             sender_role=sender_role,
             mode="auto_moderate",
             jev_summary=summary,
+            report=report,
         )
         prompt = (
             f"message_id={message_id}\nmember_id={member_id} (role={sender_role})\n"
@@ -141,7 +218,9 @@ class ModerationModule:
             f"jev={summary}"
         )
         decision = await self._manager.decision_agent.execute(prompt, context=turn)
-        return decision.action_taken, await self._reply_for(turn, decision)
+        return decision.action_taken, await self._reply_for(
+            turn, decision, categories=hits
+        )
 
     async def follow_admin_instruction(
         self,
@@ -173,7 +252,11 @@ class ModerationModule:
         return decision.action_taken or bool(reply), reply
 
     async def _reply_for(
-        self, turn: TurnContext, decision: DecisionOutcome
+        self,
+        turn: TurnContext,
+        decision: DecisionOutcome,
+        *,
+        categories: list[str] | None = None,
     ) -> str | None:
         if not decision.should_reply and not decision.action_taken:
             return None
@@ -186,6 +269,7 @@ class ModerationModule:
                 actor_id=turn.member_id,
                 actor_role=turn.sender_role,
                 target_id=decision.target_member_id or turn.member_id,
+                categories=list(categories or []),
                 executed_actions=list(decision.executed_actions),
                 facts={
                     "summary": decision.summary,
@@ -196,7 +280,7 @@ class ModerationModule:
             )
         )
 
-    async def _enforce_without_agent(
+    async def _enforce_and_compose(
         self,
         gateway: Gateway,
         *,
@@ -205,10 +289,18 @@ class ModerationModule:
         message_id: str,
         bot_role: str,
         report: SafetyReport,
+        categories: list[str],
+        fast_critical: bool,
     ) -> tuple[bool, str | None]:
+        """Execute moderation actions and delegate reply wording to ReplyAgent."""
         cfg = self.config(group_id)
-        reason = f"{report.primary_category} (severity={report.severity})"
-        if report.severity <= 1 or report.max_risk < cfg.enforce_confidence:
+        label = ", ".join(categories) or report.primary_category
+        reason = f"{label} (severity={report.severity})"
+        executed: list[str] = []
+
+        if not fast_critical and (
+            report.severity <= 1 or report.max_risk < cfg.enforce_confidence
+        ):
             outcome = await self.warn(
                 gateway,
                 group_id,
@@ -217,12 +309,18 @@ class ModerationModule:
                 reason=reason,
             )
         else:
-            await self.recall(
+            rec = await self.recall(
                 gateway, group_id, message_id, target_id=member_id, reason=reason
             )
-            if report.severity == 2:
+            if rec.succeeded:
+                executed.append("recall")
+            if report.severity <= 2 and not fast_critical:
                 outcome = await self.mute(
                     gateway, group_id, member_id, duration=600, reason=reason
+                )
+            elif report.severity == 3:
+                outcome = await self.mute(
+                    gateway, group_id, member_id, duration=3600, reason=reason
                 )
             else:
                 outcome = await self.kick(
@@ -230,21 +328,30 @@ class ModerationModule:
                     group_id,
                     member_id,
                     reason=reason,
-                    blacklist=report.severity >= 4,
+                    blacklist=True,
                 )
-        if not outcome.succeeded:
+
+        if outcome.succeeded:
+            executed.append(outcome.action)
+        if not executed:
             return False, None
+
         reply = await self._manager.reply_agent.execute(
             ReplySpec(
                 manager=self._manager,
                 group_id=group_id,
                 bot_role=bot_role,
-                scenario="auto_moderation",
+                scenario="critical_moderation" if fast_critical else "auto_moderation",
                 actor_id="bot",
                 actor_role=bot_role,
                 target_id=member_id,
-                executed_actions=[outcome.action],
-                facts={"violation": report.primary_category, "detail": outcome.message},
+                categories=categories,
+                executed_actions=executed,
+                facts={
+                    "categories": categories,
+                    "severity": report.severity,
+                    "detail": outcome.message,
+                },
                 fallback=outcome.message,
             )
         )
@@ -559,5 +666,6 @@ __all__ = [
     "ActionOutcome",
     "ModerationConfig",
     "ModerationModule",
+    "RouteKind",
     "WarningCategory",
 ]

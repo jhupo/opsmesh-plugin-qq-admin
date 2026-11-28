@@ -1,5 +1,39 @@
-# Localized fallback notices for commands and moderation actions.
+# Fallback notices (used only when ReplyAgent is unavailable) and guardrail patterns.
 
+[role_policy]
+owner = "Bot 为本群群主：跳过插件侧保护名单与每日限额限制，仍以真实证据与平台接口返回为准。"
+admin = "Bot 为本群管理员：严格遵循保护名单、豁免名单、禁言冷却、时长上限、每日配额与处罚阶梯。"
+member = "Bot 当前为普通成员：无写管理权限，仅可查询，不得执行写操作。"
+
+[reply_guard]
+fake_claim_patterns = [
+  '已解禁|已解除\S{0,12}?禁言',
+  '已将\S{0,16}?禁言|已把\S{0,16}?禁言|已禁言',
+  '已将\S{0,16}?踢出|已把\S{0,16}?踢出|已踢出',
+  '已拉黑|已加入黑名单|已移出黑名单',
+  '已撤回|已经撤回',
+  '已警告|已发出警告',
+]
+fake_deny_flags = [
+  "我没有权限",
+  "我不能执行",
+  "权限不足",
+  "无法禁言",
+  "无法踢人",
+]
+legit_reason_flags = [
+  "保护名单",
+  "豁免名单",
+  "冷却",
+  "每日上限",
+  "阶梯",
+  "失败",
+  "拦截",
+  "平台",
+  "普通成员",
+]
+
+[fallback]
 denied = "权限不足，无法执行该管理命令。"
 bot_not_admin = "Bot 当前不是本群管理员或群主，无法执行管理操作。"
 admin_status = """群 {group_id} 管理状态

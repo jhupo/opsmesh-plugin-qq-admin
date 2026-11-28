@@ -1,4 +1,4 @@
-"""System 2 Agent 1: DecisionAgent using OpenAI Responses API."""
+"""System 2 Agent 1: DecisionAgent using OpenAI Responses API and .md templates."""
 
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal
@@ -18,6 +18,7 @@ from qq import Gateway
 from qq_admin.config import Config
 
 from .guardrails import injection_guardrail
+from .jev import SafetyReport
 from .tools import GROUP_ADMIN_TOOLS
 
 if TYPE_CHECKING:
@@ -38,6 +39,7 @@ class TurnContext:
     sender_role: str
     mode: Literal["auto_moderate", "admin_command"]
     jev_summary: str = ""
+    report: SafetyReport | None = None
     executed_actions: list[str] = field(default_factory=list)
     tool_outputs: list[str] = field(default_factory=list)
 
@@ -91,7 +93,7 @@ class DecisionAgent:
         recent_ops = context.manager.audit.count_member_actions(
             context.group_id, context.member_id, within_hours=24.0
         )
-        instructions = catalog.planner_prompt(
+        instructions = catalog.decision_prompt(
             context.mode,
             group_id=context.group_id,
             bot_role=context.bot_role,

@@ -137,3 +137,28 @@ async def test_moderation_actions_and_join_approval() -> None:
     res2 = await manager.approval.review(gw, "G1", jev_risky_req)
     assert res2 is not None
     assert res2.action == "reject"
+
+    # 3-channel routing, trusted domains, and per-category disable
+    from qq_admin import SafetyReport
+
+    route, hits = manager.moderation.classify_route(
+        "G1", SafetyReport(violence=0.92, severity=4)
+    )
+    assert route == "critical_fast"
+    assert hits == ["violence"]
+
+    route_atk, _ = manager.moderation.classify_route(
+        "G1", SafetyReport(prompt_injection=0.88, severity=2)
+    )
+    assert route_atk == "attack"
+
+    manager.moderation.update_config("G1", "disabled_categories", "advertising")
+    route_off, _ = manager.moderation.classify_route(
+        "G1", SafetyReport(advertising=0.95, severity=2)
+    )
+    assert route_off == "allow"
+
+    filtered = manager.moderation.filter_urls(
+        "G1", ["https://github.com/org/repo", "https://spam.example/promo"]
+    )
+    assert filtered == ["https://spam.example/promo"]

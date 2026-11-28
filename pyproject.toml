@@ -40,7 +40,7 @@ where = ["src"]
 include = ["qq_admin*"]
 
 [tool.setuptools.package-data]
-qq_admin = ["py.typed", "prompts/*.toml"]
+qq_admin = ["py.typed", "prompts/*.toml", "prompts/*.md"]
 
 [tool.setuptools.dynamic]
 dependencies = {file = ["requirements.txt"]}

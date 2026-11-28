@@ -5,7 +5,9 @@ Automatic Official QQ Bot v2 group administration plugin for [OpsMesh](https://g
 ## Architecture
 
 - **Minimal Flat Config ([config.py](src/qq_admin/config.py))**: One flat `Config` (`jev_api_key`, `jev_model`, `openai_api_key`, `openai_base_url`, `model`, `reasoning_effort`, `max_turns`, `timeout_seconds`, `config_path`). Every feature module owns its own defaults and persists per-group overrides via `ConfigStore` only when customized online via `/admin`.
-- **Dedicated Prompts Folder (`src/qq_admin/prompts/`)**: Separated prompt files for stateless Jev safety classification (`jev.toml` covering violence, sexual content, suicide/self-harm, political sensitivity, jailbreak, non-violent crime, PII, unethical behavior, copyright infringement, advertising, and prompt injection), guardrails (`jev_guards.toml`), `decision_agent.toml`, `reply_agent.toml`, and `notices.toml`.
+- **Dedicated Prompts Folder (`src/qq_admin/prompts/`)**:
+  - Markdown role templates (`reply_agent.md`, `decision_auto.md`, `decision_admin.md`) for dynamic, non-repetitive replies and moderation decisions.
+  - `jev.toml` (11 fixed safety categories + severity), `jev_guards.toml` (join-request risk + optional tool judge), and `notices.toml` (fallback notices when LLM is unavailable).
 - **Stateless Model Runners (`src/qq_admin/models/`)**:
   - `Jev.execute(text=..., images=..., urls=...) -> SafetyReport`: stateless TypeSafe Jev classifier with fixed questions returning typed risk scores.
   - `DecisionAgent.execute(prompt, context=...)`: stateless tool-calling moderation decision agent (`temperature=0.0`).
