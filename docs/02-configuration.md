@@ -1,36 +1,35 @@
-# 02. 配置指南
+# 02. 配置指南（`config.toml` 与环境变量）
 
-全部配置通过 `QQ_ADMIN__<SECTION>__<FIELD>` 环境变量或 `.env` 自动加载（Pydantic v2 校验）。
+插件同时支持 **TOML 配置文件**（推荐，完整模板见 [src/qq_admin/resources/config.toml](../src/qq_admin/resources/config.toml)）与 **OpsMesh `.env` 嵌套环境变量**。
 
-| 分区 | 关键配置项 | 默认值 | 说明 |
-| :--- | :--- | :--- | :--- |
-| 顶层 | `QQ_ADMIN__ENABLED` | `true` | 插件总开关 |
-| 顶层 | `QQ_ADMIN__PROMPTS_PATH` | `""` | 外部自定义 `prompts.toml` 路径（默认使用内置 `resources/prompts.toml`） |
-| `admin` | `QQ_ADMIN__ADMIN__ADMINS` | `[]` | 全局管理员 `member_openid` 列表 |
-| `admin` | `QQ_ADMIN__ADMIN__ALLOW_GROUP_OWNER` | `true` | 允许本群群主执行 `/admin` 命令 |
-| `admin` | `QQ_ADMIN__ADMIN__DENY_RESPONSE` | `"silent"` | 无权限响应策略：`silent` / `reply`（开启 LLM 时由 `ReplyAgent` 自然回复） |
-| `auto_moderate` | `QQ_ADMIN__AUTO_MODERATE__ENABLED` | `true` | 启用自动群管巡检 |
-| `auto_moderate` | `QQ_ADMIN__AUTO_MODERATE__ENABLED_GROUPS` | `[]` | 启用群白名单（留空表示全部群生效） |
-| `auto_moderate` | `QQ_ADMIN__AUTO_MODERATE__STOP_ON_VIOLATION` | `true` | 违规处置后阻断下游聊天插件 |
-| `auto_moderate` | `QQ_ADMIN__AUTO_MODERATE__ALLOW_ADMIN_NL_CONTROL` | `true` | 允许群主/管理员 `@Bot` 自然语言控群 |
-| `jev` | `QQ_ADMIN__JEV__ENABLED` | `true` | 启用 TypeSafe AI Jev System 1 检测 |
-| `jev` | `QQ_ADMIN__JEV__API_KEY` | `""` | TypeSafe API Key |
-| `jev` | `QQ_ADMIN__JEV__MODEL` | `"jev-1"` | TypeSafe 决策模型名 |
-| `jev` | `QQ_ADMIN__JEV__PROXY` | `""` | 可选 HTTP/SOCKS5 代理 |
-| `jev` | `QQ_ADMIN__JEV__ENABLE_IMAGE_REVIEW` | `true` | 启用图片附件多模态检测 |
-| `jev` | `QQ_ADMIN__JEV__ENABLE_ACTION_GUARDRAIL` | `true` | 启用工具执行前 Jev 证据二审 |
-| `llm` | `QQ_ADMIN__LLM__ENABLED` | `false` | 启用双 OpenAI Agents SDK（DecisionAgent + ReplyAgent） |
-| `llm` | `QQ_ADMIN__LLM__API_KEY` | `""` | OpenAI 或兼容接口 Key |
-| `llm` | `QQ_ADMIN__LLM__BASE_URL` | `""` | 可选兼容端点 Base URL |
-| `llm` | `QQ_ADMIN__LLM__DECISION_MODEL` | `"gpt-5-mini"` | Agent 1 裁决执行模型 |
-| `llm` | `QQ_ADMIN__LLM__REPLY_MODEL` | `""` | Agent 2 回复生成模型（留空复用 `decision_model`） |
-| `llm` | `QQ_ADMIN__LLM__REPLY_TEMPERATURE` | `0.7` | Agent 2 回复自由发挥温度 |
-| `llm` | `QQ_ADMIN__LLM__REPLY_PERSONA` | `""` | 覆盖 `prompts.toml` 中 `[reply_agent].persona` 角色人设 |
-| `safeguard` | `QQ_ADMIN__SAFEGUARD__MAX_MUTE_DURATION` | `3600` | 单次最大禁言秒数（Bot 管理员角色） |
-| `safeguard` | `QQ_ADMIN__SAFEGUARD__MUTE_COOLDOWN` | `300` | 同用户禁言冷却秒数 |
-| `safeguard` | `QQ_ADMIN__SAFEGUARD__DAILY_MUTE_LIMIT` | `10` | 每群每日禁言上限 |
-| `safeguard` | `QQ_ADMIN__SAFEGUARD__DAILY_KICK_LIMIT` | `3` | 每群每日踢人上限 |
-| `auto_approve` | `QQ_ADMIN__AUTO_APPROVE__ENABLED` | `false` | 启用入群申请自动审批 |
-| `auto_approve` | `QQ_ADMIN__AUTO_APPROVE__DEFAULT_ACTION` | `"ignore"` | 默认策略：`ignore` / `approve` / `reject` |
-| `auto_approve` | `QQ_ADMIN__AUTO_APPROVE__REJECT_ON_RISK_TIPS` | `true` | 命中官方 `risk_tips` 自动拒绝 |
-| `auto_approve` | `QQ_ADMIN__AUTO_APPROVE__USE_JEV_REVIEW` | `true` | 启用 Jev 入群风险评估 |
+## 1. TOML 配置加载
+
+在 `.env` 中指定路径：
+
+```dotenv
+QQ_ADMIN_CONFIG="config.toml"
+```
+
+或在代码中直接加载：
+
+```python
+from qq_admin import AdminConfig, configure
+
+configure(AdminConfig.from_toml("config.toml"))
+```
+
+## 2. 11 个对称配置分区（`AdminConfig`）
+
+| 分区字段 | 模型类 | 核心配置项 |
+| :--- | :--- | :--- |
+| `[plugin]` | `PluginSettings` | `enabled`、`prompts_path` |
+| `[admin]` | `AdminSettings` | `admins`、`allow_group_owner`、`owner_allowed_commands`、`deny_response` |
+| `[identity]` | `IdentitySettings` | `role_cache_ttl_seconds`、`bot_role_refresh_seconds`、`sender_role_refresh_seconds` |
+| `[moderation]` | `ModerationSettings` | `enabled`、`enabled_groups`、`stop_on_violation`、`allow_admin_nl_control`、`recent_context_size` |
+| `[jev]` | `JevSettings` | `enabled`、`api_key`（`SecretStr`）、`model`、`proxy`、`warn_confidence`、`enforce_confidence`、`enable_image_review`、`enable_action_guardrail` |
+| `[agent]` | `AgentSettings` | `enabled`、`api_key`（`SecretStr`）、`base_url`、`decision_model`、`reply_model`、`reply_temperature`、`reply_persona`、`use_chat_completions` |
+| `[safeguard]` | `SafeguardSettings` | `max_mute_duration`、`mute_cooldown`、`daily_mute_limit`、`daily_kick_limit`、`protected_users`、`exempt_users`、`auto_exempt_admins`、`kick_require_confirm` |
+| `[warning]` | `WarningSettings` | `enabled`、`spam_threshold/window_seconds`、`abuse_threshold/window_seconds`、`ad_threshold/window_seconds` |
+| `[escalation]` | `EscalationSettings` | `enabled`、`steps`（`within_hours` / `count` / `action` / `mute_seconds` / `blacklist`） |
+| `[approval]` | `ApprovalSettings` | `enabled`、`default_action`、`reject_on_risk_tips`、`use_jev_review`、`max_pending_seconds`、`check_interval_seconds`、`groups` |
+| `[logging]` | `LoggingSettings` | `max_log_entries`、`default_log_lines` |

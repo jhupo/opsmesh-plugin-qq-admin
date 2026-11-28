@@ -2,12 +2,13 @@
 
 ## 0.2.0
 
-- 按领域清晰拆分为 `jev/`、`moderation/`、`agents/`、`handlers/`、`resources/` 五大子包，彻底移除扁平堆砌与脆弱的正则规则快筛（FastGate）。
-- 封装可注入的 `JevClient`（`qq_admin.jev.JevClient`），所有评估器与 Guardrail 通过参数显式接收客户端实例，不写死全局单例。
-- 引入 **双 OpenAI Agents SDK 架构**：
-  - `DecisionAgent`（`agents/decision_agent.py`）：`temperature=0.0`，负责调用 9 个官方 QQ v2 `@function_tool` 并输出结构化 `ExecutionReport`；
-  - `ReplyAgent`（`agents/reply_agent.py`）：接收实时状态快照、角色人设提示词与执行事实，自由生成自然、不重复的群管回复（违规处理、权限拒绝、护栏拦截、命令反馈）。
-- 全部中文提示词、Jev 评判标准、角色人设与兜底模板外置至 `src/qq_admin/resources/prompts.toml`，全部 `.py` 源码严格保持 0 中文字符。
+- 按《代码整洁之道》全面重构组件命名与职责边界：
+  - 协作者类职责单一、参数精简：`PromptCatalog`、`GroupStateStore`、`JevEvaluator`、`SafeguardPolicy`、`GroupModerator`、`JoinApprover`、`DecisionPlanner`、`ReplyComposer`、`EventRouter`、`AdminRuntime`。
+  - 移除 Agent 工具函数的冗余 `tool_` 前缀与 `name_override`，直接以领域动词命名（`get_member`、`list_muted_members`、`warn_member`、`mute_member`、`unmute_member`、`kick_member`、`ban_member`、`unban_member`、`recall_message`）。
+  - 重构 `commands/` 为声明式 `@command(name, prefix=..., pattern=..., role=..., usage=...)` 正则路由，拆分为 `console.py`、`actions.py`、`queries.py` 21 个短小顶层函数，消除嵌套闭包与重复鉴权/切词样板。
+  - 重构 `config.py` 为对称 `*Settings` 模型（`SecretStr` 保护密钥），内置完整 `resources/config.toml` 默认模板并支持 `AdminConfig.from_toml()` 与 `QQ_ADMIN_CONFIG` 加载。
+  - `AdminRuntime` 统一托管并复用 `AsyncTypeSafeClient` 与 `AsyncOpenAI` 连接池生命周期。
+- 全部中文提示词、Jev 评判标准、角色人设与兜底文案独立存放在 `src/qq_admin/resources/prompts.toml`，全仓 `.py` 保持 0 中文字符。
 
 ## 0.1.0
 

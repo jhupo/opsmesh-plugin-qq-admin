@@ -1,8 +1,8 @@
-"""Three-layer OpenAI Agents SDK Guardrails backed by injected JevClient."""
+"""Three-layer OpenAI Agents SDK guardrails backed by SafeguardPolicy & JevEvaluator."""
 
 import json
 import re
-from typing import Any, Literal
+from typing import Any
 
 from agents import (
     Agent,
@@ -14,57 +14,47 @@ from agents import (
     tool_input_guardrail,
 )
 
-from qq_admin.jev import (
-    check_action_validity,
-    check_input_injection,
-    check_output_safety,
-)
-from qq_admin.moderation import check_action_guard
+from qq_admin.moderation import WriteAction
 
-from .context import ModerationContext, ReplyContext
+from .schemas import ReplySpec, TurnContext
 
-_WRITE_TOOL_TO_ACTION: dict[str, Literal["warn", "mute", "kick", "ban", "recall"]] = {
-    "group_warn_member": "warn",
-    "group_mute_member": "mute",
-    "group_kick_member": "kick",
-    "group_ban_member": "ban",
-    "group_recall_message": "recall",
+_TOOL_ACTIONS: dict[str, WriteAction] = {
+    "warn_member": "warn",
+    "mute_member": "mute",
+    "kick_member": "kick",
+    "ban_member": "ban",
+    "recall_message": "recall",
 }
 
 
-def _flatten_input(raw_input: Any) -> str:
+def _extract_text(raw_input: Any) -> str:
     if isinstance(raw_input, str):
         return raw_input
     if isinstance(raw_input, list):
-        parts: list[str] = []
-        for item in raw_input:
-            if isinstance(item, dict) and isinstance(item.get("content"), str):
-                parts.append(item["content"])
-        return "\n".join(parts)
+        return "\n".join(
+            item["content"]
+            for item in raw_input
+            if isinstance(item, dict) and isinstance(item.get("content"), str)
+        )
     return str(raw_input)
 
 
 @input_guardrail
-async def prompt_injection_guardrail(
-    ctx: RunContextWrapper[ModerationContext],
+async def injection_guardrail(
+    ctx: RunContextWrapper[TurnContext],
     _agent: Agent[Any],
     raw_input: Any,
 ) -> GuardrailFunctionOutput:
-    """Block prompt injection using cached or live injected JevClient check."""
-    mctx = ctx.context
-    cfg = mctx.runtime.config.jev
-    if mctx.evaluation is not None and mctx.evaluation.status == "ok":
-        prob = mctx.evaluation.is_prompt_injection_prob
+    """Reject prompt-injection attempts via cached or live JevEvaluator check."""
+    turn = ctx.context
+    threshold = turn.runtime.config.jev.injection_block_threshold
+    if turn.assessment is not None and turn.assessment.status == "ok":
+        prob = turn.assessment.injection_probability
         return GuardrailFunctionOutput(
             output_info={"probability": prob},
-            tripwire_triggered=prob >= cfg.injection_block_threshold,
+            tripwire_triggered=prob >= threshold,
         )
-    verdict = await check_input_injection(
-        mctx.runtime.jev_client,
-        mctx.runtime.config.jev,
-        mctx.runtime.prompts,
-        _flatten_input(raw_input),
-    )
+    verdict = await turn.runtime.jev.check_injection(_extract_text(raw_input))
     return GuardrailFunctionOutput(
         output_info=verdict.model_dump(),
         tripwire_triggered=verdict.blocked,
@@ -72,93 +62,81 @@ async def prompt_injection_guardrail(
 
 
 @tool_input_guardrail
-async def moderation_tool_guardrail(data: Any) -> ToolGuardrailFunctionOutput:
-    """Enforce 8-step hard safeguard + JevClient action evidence verification."""
-    mctx: ModerationContext = data.context.context
-    tool_name: str = str(data.context.tool_name or "")
+async def action_guardrail(data: Any) -> ToolGuardrailFunctionOutput:
+    """Enforce 8-step SafeguardPolicy + JevEvaluator action evidence check."""
+    turn: TurnContext = data.context.context
+    tool_name = str(data.context.tool_name or "")
     try:
         args = json.loads(data.context.tool_arguments or "{}")
     except json.JSONDecodeError:
         return ToolGuardrailFunctionOutput.reject_content("Invalid JSON arguments.")
 
-    action = _WRITE_TOOL_TO_ACTION.get(tool_name)
+    action = _TOOL_ACTIONS.get(tool_name)
     if action is None:
         return ToolGuardrailFunctionOutput.allow()
 
-    target = str(args.get("member_openid") or mctx.member_openid)
-    duration = args.get("duration_seconds") if action == "mute" else None
-    decision = await check_action_guard(
-        mctx.gateway,
-        mctx.runtime.config,
-        mctx.runtime.state,
-        group_openid=mctx.group_openid,
-        target_openid=target,
-        action=action,
-        duration_seconds=int(duration) if isinstance(duration, int) else None,
-        require_member_check=(action == "kick"),
+    target = str(args.get("member_id") or turn.member_id)
+    raw_dur = args.get("duration_seconds") if action == "mute" else None
+    verdict = await turn.runtime.policy.verify_action(
+        turn.gateway,
+        turn.group_id,
+        target,
+        action,
+        duration=int(raw_dur) if isinstance(raw_dur, int) else None,
+        require_confirm=(action == "kick"),
     )
-    if not decision.allowed:
+    if not verdict.allowed:
         return ToolGuardrailFunctionOutput.reject_content(
-            f"Safeguard blocked ({decision.step}): {decision.reason}"
+            f"Safeguard blocked ({verdict.step}): {verdict.reason}"
         )
 
-    if (
-        mctx.mode == "auto_moderate"
-        and mctx.runtime.jev_client is not None
-        and mctx.runtime.config.jev.enabled
-    ):
+    if turn.mode == "auto_moderate" and turn.runtime.jev.is_active:
         evidence: dict[str, Any] = {
-            "group_openid": mctx.group_openid,
-            "sender_openid": mctx.member_openid,
-            "message_text": mctx.plain_text[:2000],
-            "recent_messages": mctx.runtime.state.get_recent_messages(
-                mctx.group_openid, limit=8
-            ),
+            "group_id": turn.group_id,
+            "sender_id": turn.member_id,
+            "message_text": turn.text[:2000],
+            "recent_messages": turn.runtime.state.recent_context(turn.group_id),
         }
-        if mctx.evaluation is not None:
-            evidence["jev_eval"] = mctx.evaluation.model_dump()
-
-        verdict = await check_action_validity(
-            mctx.runtime.jev_client,
-            mctx.runtime.config.jev,
-            mctx.runtime.prompts,
+        if turn.assessment is not None:
+            evidence["assessment"] = turn.assessment.model_dump()
+        safety = await turn.runtime.jev.verify_action(
             proposal={"tool": tool_name, "arguments": args},
             evidence=evidence,
         )
-        if verdict.blocked:
+        if safety.blocked:
             return ToolGuardrailFunctionOutput.reject_content(
-                f"Jev verification rejected: {verdict.reason}"
+                f"Jev verification rejected: {safety.reason}"
             )
 
     return ToolGuardrailFunctionOutput.allow()
 
 
 @output_guardrail
-async def reply_output_guardrail(
-    ctx: RunContextWrapper[ReplyContext],
+async def reply_guardrail(
+    ctx: RunContextWrapper[ReplySpec],
     _agent: Agent[Any],
     output: str,
 ) -> GuardrailFunctionOutput:
-    """Block fake execution claims, false denials, and unsafe replies."""
-    rctx = ctx.context
+    """Block unexecuted action claims, false permission denials, and unsafe text."""
+    spec = ctx.context
     text = str(output or "").strip()
     if not text:
         return GuardrailFunctionOutput(
             output_info={"skipped": True}, tripwire_triggered=False
         )
 
-    reply_prompts = rctx.runtime.prompts.get("reply_agent", {})
-    if not rctx.executed_actions:
-        for pat in reply_prompts.get("fake_claim_patterns", []):
-            if re.search(str(pat), text):
+    rules = spec.runtime.catalog.composer
+    if not spec.executed_actions:
+        for pattern in rules.get("fake_claim_patterns", []):
+            if re.search(str(pattern), text):
                 return GuardrailFunctionOutput(
                     output_info={"reason": "fake_execution_claim"},
                     tripwire_triggered=True,
                 )
 
-    if rctx.bot_role in ("owner", "admin") and rctx.scenario != "permission_denied":
-        deny_flags = [str(x) for x in reply_prompts.get("fake_deny_flags", [])]
-        legit_flags = [str(x) for x in reply_prompts.get("legit_reason_flags", [])]
+    if spec.bot_role in ("owner", "admin") and spec.scenario != "permission_denied":
+        deny_flags = [str(x) for x in rules.get("fake_deny_flags", [])]
+        legit_flags = [str(x) for x in rules.get("legit_reason_flags", [])]
         if any(f in text for f in deny_flags) and not any(
             r in text for r in legit_flags
         ):
@@ -167,17 +145,11 @@ async def reply_output_guardrail(
                 tripwire_triggered=True,
             )
 
-    verdict = await check_output_safety(
-        rctx.runtime.jev_client, rctx.runtime.config.jev, rctx.runtime.prompts, text
-    )
+    safety = await spec.runtime.jev.check_reply(text)
     return GuardrailFunctionOutput(
-        output_info=verdict.model_dump(),
-        tripwire_triggered=verdict.blocked,
+        output_info=safety.model_dump(),
+        tripwire_triggered=safety.blocked,
     )
 
 
-__all__ = [
-    "moderation_tool_guardrail",
-    "prompt_injection_guardrail",
-    "reply_output_guardrail",
-]
+__all__ = ["action_guardrail", "injection_guardrail", "reply_guardrail"]

@@ -1,23 +1,17 @@
-"""Automatic QQ Official Bot v2 group administration plugin for OpsMesh."""
+"""Automatic Official QQ Bot v2 group administration plugin for OpsMesh."""
 
 from importlib.metadata import PackageNotFoundError, version
 
+from openai import AsyncOpenAI as _AsyncOpenAI
 from opsmesh import get_driver
 from opsmesh.plugin import PluginMetadata, get_plugin_config
 from typesafe_sdk import AsyncTypeSafeClient as _AsyncTypeSafeClient
 
-from .config import (
-    QQAdminConfig as _QQAdminConfig,
-)
-from .config import (
-    _OpsMeshPluginConfigWrapper,
-)
-from .config import (
-    load_prompts as _load_prompts,
-)
-from .handlers import register_commands, register_event_handlers
-from .state import AdminState as _AdminState
-from .state import PluginRuntime as _PluginRuntime
+from .commands import bind_commands
+from .config import AdminConfig as _AdminConfig
+from .config import Config as _Config
+from .events import bind_events
+from .runtime import AdminRuntime as _AdminRuntime
 
 try:
     __version__: str | None = version("opsmesh-plugin-qq-admin")
@@ -37,116 +31,113 @@ __plugin_meta__ = PluginMetadata(
     ),
     type="application",
     homepage="https://github.com/jhupo/opsmesh-plugin-qq-admin",
-    config=_OpsMeshPluginConfigWrapper,
+    config=_Config,
     supported_adapters={"qq"},
 )
 
-_runtime: _PluginRuntime | None = None
+_runtime: _AdminRuntime | None = None
 
 
 def configure(
-    config: _QQAdminConfig | None = None,
+    config: _AdminConfig | None = None,
     *,
     jev_client: _AsyncTypeSafeClient | None = None,
-) -> _PluginRuntime:
-    """Create or replace PluginRuntime with an optional AsyncTypeSafeClient."""
+    openai_client: _AsyncOpenAI | None = None,
+) -> _AdminRuntime:
+    """Create or replace the active AdminRuntime with injectable SDK clients."""
     global _runtime
     cfg = config
     if cfg is None:
         try:
-            cfg = get_plugin_config(_OpsMeshPluginConfigWrapper).qq_admin
+            cfg = get_plugin_config(_Config).resolve()
         except ValueError:
-            cfg = _QQAdminConfig()
-    prompts = _load_prompts(cfg.prompts_path)
-    _runtime = _PluginRuntime(
-        config=cfg,
-        state=_AdminState(cfg),
+            cfg = _AdminConfig()
+    _runtime = _AdminRuntime(
+        cfg,
         jev_client=jev_client,
-        owns_jev_client=False,
-        prompts=prompts,
+        openai_client=openai_client,
     )
     return _runtime
 
 
-def get_runtime() -> _PluginRuntime:
-    """Return the active PluginRuntime, creating a default one if uninitialized."""
+def get_runtime() -> _AdminRuntime:
+    """Return the active AdminRuntime, creating a default instance if needed."""
     global _runtime
     if _runtime is None:
         return configure()
     return _runtime
 
 
-# Auto-register handlers and commands when loaded under an active OpsMesh driver.
+# Auto-bind commands and event listeners when loaded under an active OpsMesh driver.
 try:
     get_driver()
 except ValueError:
     pass
 else:
-    _active_runtime = configure()
-    if _active_runtime.config.enabled:
-        register_event_handlers(_active_runtime)
-        register_commands(_active_runtime)
+    _active = configure()
+    if _active.config.plugin.enabled:
+        bind_commands(_active)
+        bind_events(_active)
 
 
-from .agents import MODERATION_TOOLS as MODERATION_TOOLS
-from .agents import ExecutionReport as ExecutionReport
-from .agents import ModerationContext as ModerationContext
-from .agents import ReplyContext as ReplyContext
-from .agents import build_decision_agent as build_decision_agent
-from .agents import build_reply_agent as build_reply_agent
-from .agents import generate_reply as generate_reply
-from .agents import run_decision_agent as run_decision_agent
+from .agents import GROUP_ADMIN_TOOLS as GROUP_ADMIN_TOOLS
+from .agents import DecisionOutcome as DecisionOutcome
+from .agents import DecisionPlanner as DecisionPlanner
+from .agents import ReplyComposer as ReplyComposer
+from .agents import ReplySpec as ReplySpec
+from .agents import TurnContext as TurnContext
+from .agents import ban_member as ban_member
+from .agents import get_member as get_member
+from .agents import kick_member as kick_member
+from .agents import list_muted_members as list_muted_members
+from .agents import mute_member as mute_member
+from .agents import recall_message as recall_message
+from .agents import unban_member as unban_member
+from .agents import unmute_member as unmute_member
+from .agents import warn_member as warn_member
+from .commands import COMMAND_ROUTES as COMMAND_ROUTES
+from .commands import CommandContext as CommandContext
+from .commands import CommandRoute as CommandRoute
+from .commands import command as command
+from .commands import dispatch_command as dispatch_command
 from .config import AdminConfig as AdminConfig
-from .config import AutoApproveConfig as AutoApproveConfig
-from .config import AutoModerateConfig as AutoModerateConfig
-from .config import EscalationConfig as EscalationConfig
-from .config import EscalationStep as EscalationStep
-from .config import GroupApproveOverride as GroupApproveOverride
-from .config import JevConfig as JevConfig
-from .config import LLMConfig as LLMConfig
-from .config import LoggingConfig as LoggingConfig
-from .config import QQAdminConfig as QQAdminConfig
-from .config import SafeguardConfig as SafeguardConfig
-from .config import WarningConfig as WarningConfig
-from .config import load_prompts as load_prompts
-from .config import render_fallback_message as render_fallback_message
+from .config import AdminSettings as AdminSettings
+from .config import AgentSettings as AgentSettings
+from .config import ApprovalSettings as ApprovalSettings
+from .config import Config as Config
+from .config import EscalationRule as EscalationRule
+from .config import EscalationSettings as EscalationSettings
+from .config import GroupApprovalPolicy as GroupApprovalPolicy
+from .config import IdentitySettings as IdentitySettings
+from .config import JevSettings as JevSettings
+from .config import LoggingSettings as LoggingSettings
+from .config import ModerationSettings as ModerationSettings
+from .config import PluginSettings as PluginSettings
+from .config import SafeguardSettings as SafeguardSettings
+from .config import WarningSettings as WarningSettings
+from .events import EventRouter as EventRouter
 from .exception import BotNotAdminError as BotNotAdminError
-from .exception import GuardBlockedError as GuardBlockedError
 from .exception import PermissionDeniedError as PermissionDeniedError
 from .exception import QQAdminError as QQAdminError
-from .handlers import handle_group_message_event as handle_group_message_event
-from .handlers import handle_group_notice_event as handle_group_notice_event
+from .exception import SafeguardBlockedError as SafeguardBlockedError
 from .jev import AsyncTypeSafeClient as AsyncTypeSafeClient
-from .jev import GuardVerdict as GuardVerdict
-from .jev import JoinRiskEvaluation as JoinRiskEvaluation
-from .jev import MessageEvaluation as MessageEvaluation
-from .jev import close_jev_client as close_jev_client
-from .jev import create_jev_client as create_jev_client
-from .jev import evaluate_join_request as evaluate_join_request
-from .jev import evaluate_message as evaluate_message
-from .moderation import ActionResult as ActionResult
-from .moderation import GuardDecision as GuardDecision
+from .jev import JevEvaluator as JevEvaluator
+from .jev import JoinRiskAssessment as JoinRiskAssessment
+from .jev import MessageAssessment as MessageAssessment
+from .jev import SafetyVerdict as SafetyVerdict
+from .moderation import ActionOutcome as ActionOutcome
+from .moderation import GroupModerator as GroupModerator
+from .moderation import JoinApprover as JoinApprover
 from .moderation import MuteDuration as MuteDuration
 from .moderation import PermissionTrace as PermissionTrace
-from .moderation import approve_join as approve_join
-from .moderation import ban_member as ban_member
-from .moderation import check_action_guard as check_action_guard
-from .moderation import enforce_escalation_violation as enforce_escalation_violation
-from .moderation import (
-    evaluate_and_handle_join_request as evaluate_and_handle_join_request,
-)
-from .moderation import evaluate_command_permission as evaluate_command_permission
-from .moderation import is_group_enabled as is_group_enabled
-from .moderation import kick_member as kick_member
-from .moderation import mute_member as mute_member
-from .moderation import parse_mute_duration as parse_mute_duration
-from .moderation import recall_message as recall_message
-from .moderation import reject_join as reject_join
-from .moderation import scan_join_requests_once as scan_join_requests_once
-from .moderation import unban_member as unban_member
-from .moderation import unmute_member as unmute_member
-from .moderation import warn_member as warn_member
-from .state import AdminState as AdminState
-from .state import OpLogEntry as OpLogEntry
-from .state import PluginRuntime as PluginRuntime
-from .state import RecentMessage as RecentMessage
+from .moderation import PolicyVerdict as PolicyVerdict
+from .moderation import SafeguardPolicy as SafeguardPolicy
+from .moderation import format_duration as format_duration
+from .moderation import parse_duration as parse_duration
+from .resources import DEFAULT_CONFIG_PATH as DEFAULT_CONFIG_PATH
+from .resources import DEFAULT_PROMPTS_PATH as DEFAULT_PROMPTS_PATH
+from .resources import PromptCatalog as PromptCatalog
+from .runtime import AdminRuntime as AdminRuntime
+from .state import AuditRecord as AuditRecord
+from .state import GroupStateStore as GroupStateStore
+from .state import MessageSnapshot as MessageSnapshot

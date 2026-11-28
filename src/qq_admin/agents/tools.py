@@ -1,235 +1,212 @@
-"""Atomic Official QQ v2 @function_tool set bound to DecisionAgent."""
+"""Official QQ v2 @function_tool set named directly by domain intent."""
 
 from typing import Literal
 
 from agents import RunContextWrapper, function_tool
 
-from qq_admin.moderation import (
-    ban_member,
-    kick_member,
-    mute_member,
-    recall_message,
-    unban_member,
-    unmute_member,
-    warn_member,
-)
-
-from .context import ModerationContext
-from .guardrails import moderation_tool_guardrail
+from .guardrails import action_guardrail
+from .schemas import TurnContext
 
 
-@function_tool(name_override="group_get_member")
-async def tool_get_member(
-    ctx: RunContextWrapper[ModerationContext], member_openid: str
-) -> str:
-    """Query a group member's role and join time from Official QQ v2."""
-    mctx = ctx.context
-    info = await mctx.gateway.get_group_member(mctx.group_openid, member_openid)
-    mctx.runtime.state.mark_member_checked(mctx.group_openid, member_openid)
-    mctx.executed_actions.append("get_member")
+def _operator_id(turn: TurnContext) -> str:
+    return turn.member_id if turn.mode == "admin_command" else "bot"
+
+
+@function_tool
+async def get_member(ctx: RunContextWrapper[TurnContext], member_id: str) -> str:
+    """Query a group member's role and join timestamp from Official QQ v2."""
+    turn = ctx.context
+    info = await turn.gateway.get_group_member(turn.group_id, member_id)
+    turn.runtime.state.mark_member_verified(turn.group_id, member_id)
+    turn.executed_actions.append("get_member")
     summary = (
-        f"member_openid={info.member_openid}, role={info.member_role}, "
+        f"member_id={info.member_openid}, role={info.member_role}, "
         f"bot={info.bot}, joined_at={info.joined_at}"
     )
-    mctx.tool_results.append(summary)
+    turn.tool_outputs.append(summary)
     return summary
 
 
-@function_tool(name_override="group_list_muted")
-async def tool_list_muted(ctx: RunContextWrapper[ModerationContext]) -> str:
+@function_tool
+async def list_muted_members(ctx: RunContextWrapper[TurnContext]) -> str:
     """List currently muted members and global mute mode in the group."""
-    mctx = ctx.context
-    setting = await mctx.gateway.get_group_mute_setting(mctx.group_openid)
-    mctx.executed_actions.append("list_muted")
-    members = [
+    turn = ctx.context
+    setting = await turn.gateway.get_group_mute_setting(turn.group_id)
+    turn.executed_actions.append("list_muted_members")
+    entries = [
         f"{m.member_openid}(until={m.mute_expire_at})" for m in setting.members[:20]
     ]
-    summary = f"global_mode={setting.global_rule.mode}, muted={members}"
-    mctx.tool_results.append(summary)
+    summary = f"global_mode={setting.global_rule.mode}, muted={entries}"
+    turn.tool_outputs.append(summary)
     return summary
 
 
-@function_tool(
-    name_override="group_warn_member",
-    tool_input_guardrails=[moderation_tool_guardrail],
-)
-async def tool_warn_member(
-    ctx: RunContextWrapper[ModerationContext],
-    member_openid: str,
+@function_tool(tool_input_guardrails=[action_guardrail])
+async def warn_member(
+    ctx: RunContextWrapper[TurnContext],
+    member_id: str,
     category: Literal["spam", "abuse", "ad"],
     reason: str,
 ) -> str:
-    """Record a formal warning against a violating member."""
-    mctx = ctx.context
-    res = await warn_member(
-        mctx.gateway,
-        mctx.runtime,
-        group_openid=mctx.group_openid,
-        member_openid=member_openid,
+    """Record a formal warning against a violating group member."""
+    turn = ctx.context
+    res = await turn.runtime.moderator.warn(
+        turn.gateway,
+        turn.group_id,
+        member_id,
         category=category,
         reason=reason,
-        operator_openid=mctx.member_openid if mctx.mode == "admin_command" else "bot",
+        operator_id=_operator_id(turn),
     )
-    if res.ok:
-        mctx.executed_actions.append("warn")
-    mctx.tool_results.append(res.summary)
-    return res.summary
+    if res.succeeded:
+        turn.executed_actions.append("warn")
+    turn.tool_outputs.append(res.message)
+    return res.message
 
 
-@function_tool(
-    name_override="group_mute_member",
-    tool_input_guardrails=[moderation_tool_guardrail],
-)
-async def tool_mute_member(
-    ctx: RunContextWrapper[ModerationContext],
-    member_openid: str,
+@function_tool(tool_input_guardrails=[action_guardrail])
+async def mute_member(
+    ctx: RunContextWrapper[TurnContext],
+    member_id: str,
     duration_seconds: int,
     reason: str,
 ) -> str:
     """Mute a group member for duration_seconds (1..2592000)."""
-    mctx = ctx.context
-    res = await mute_member(
-        mctx.gateway,
-        mctx.runtime,
-        group_openid=mctx.group_openid,
-        member_openid=member_openid,
+    turn = ctx.context
+    res = await turn.runtime.moderator.mute(
+        turn.gateway,
+        turn.group_id,
+        member_id,
         duration=duration_seconds,
         reason=reason,
-        operator_openid=mctx.member_openid if mctx.mode == "admin_command" else "bot",
+        operator_id=_operator_id(turn),
     )
-    if res.ok:
-        mctx.executed_actions.append("mute")
-    mctx.tool_results.append(res.summary)
-    return res.summary
+    if res.succeeded:
+        turn.executed_actions.append("mute")
+    turn.tool_outputs.append(res.message)
+    return res.message
 
 
-@function_tool(name_override="group_unmute_member")
-async def tool_unmute_member(
-    ctx: RunContextWrapper[ModerationContext], member_openid: str
-) -> str:
-    """Unmute a group member immediately."""
-    mctx = ctx.context
-    res = await unmute_member(
-        mctx.gateway,
-        mctx.runtime,
-        group_openid=mctx.group_openid,
-        member_openid=member_openid,
-        operator_openid=mctx.member_openid if mctx.mode == "admin_command" else "bot",
+@function_tool
+async def unmute_member(ctx: RunContextWrapper[TurnContext], member_id: str) -> str:
+    """Lift a group member's mute immediately."""
+    turn = ctx.context
+    res = await turn.runtime.moderator.unmute(
+        turn.gateway,
+        turn.group_id,
+        member_id,
+        operator_id=_operator_id(turn),
     )
-    if res.ok:
-        mctx.executed_actions.append("unmute")
-    mctx.tool_results.append(res.summary)
-    return res.summary
+    if res.succeeded:
+        turn.executed_actions.append("unmute")
+    turn.tool_outputs.append(res.message)
+    return res.message
 
 
-@function_tool(
-    name_override="group_kick_member",
-    tool_input_guardrails=[moderation_tool_guardrail],
-)
-async def tool_kick_member(
-    ctx: RunContextWrapper[ModerationContext],
-    member_openid: str,
+@function_tool(tool_input_guardrails=[action_guardrail])
+async def kick_member(
+    ctx: RunContextWrapper[TurnContext],
+    member_id: str,
     reason: str,
-    add_to_blacklist: bool = False,
+    blacklist: bool = False,
 ) -> str:
-    """Remove a member from the group (call group_get_member first)."""
-    mctx = ctx.context
-    res = await kick_member(
-        mctx.gateway,
-        mctx.runtime,
-        group_openid=mctx.group_openid,
-        member_openid=member_openid,
+    """Remove a member from the group (call get_member first to verify role)."""
+    turn = ctx.context
+    res = await turn.runtime.moderator.kick(
+        turn.gateway,
+        turn.group_id,
+        member_id,
         reason=reason,
-        add_to_blacklist=add_to_blacklist,
-        operator_openid=mctx.member_openid if mctx.mode == "admin_command" else "bot",
-        require_member_check=True,
+        blacklist=blacklist,
+        operator_id=_operator_id(turn),
+        require_confirm=True,
     )
-    if res.ok:
-        mctx.executed_actions.append("kick")
-    mctx.tool_results.append(res.summary)
-    return res.summary
+    if res.succeeded:
+        turn.executed_actions.append("kick")
+    turn.tool_outputs.append(res.message)
+    return res.message
 
 
-@function_tool(
-    name_override="group_ban_member",
-    tool_input_guardrails=[moderation_tool_guardrail],
-)
-async def tool_ban_member(
-    ctx: RunContextWrapper[ModerationContext],
-    member_openid: str,
+@function_tool(tool_input_guardrails=[action_guardrail])
+async def ban_member(
+    ctx: RunContextWrapper[TurnContext],
+    member_id: str,
     reason: str,
 ) -> str:
-    """Add a member to the group blacklist."""
-    mctx = ctx.context
-    res = await ban_member(
-        mctx.gateway,
-        mctx.runtime,
-        group_openid=mctx.group_openid,
-        member_openid=member_openid,
+    """Add a member to the Official QQ v2 group blacklist."""
+    turn = ctx.context
+    res = await turn.runtime.moderator.ban(
+        turn.gateway,
+        turn.group_id,
+        member_id,
         reason=reason,
-        operator_openid=mctx.member_openid if mctx.mode == "admin_command" else "bot",
+        operator_id=_operator_id(turn),
     )
-    if res.ok:
-        mctx.executed_actions.append("ban")
-    mctx.tool_results.append(res.summary)
-    return res.summary
+    if res.succeeded:
+        turn.executed_actions.append("ban")
+    turn.tool_outputs.append(res.message)
+    return res.message
 
 
-@function_tool(name_override="group_unban_member")
-async def tool_unban_member(
-    ctx: RunContextWrapper[ModerationContext], member_openid: str
-) -> str:
-    """Remove a member from the group blacklist."""
-    mctx = ctx.context
-    res = await unban_member(
-        mctx.gateway,
-        mctx.runtime,
-        group_openid=mctx.group_openid,
-        member_openid=member_openid,
-        operator_openid=mctx.member_openid if mctx.mode == "admin_command" else "bot",
+@function_tool
+async def unban_member(ctx: RunContextWrapper[TurnContext], member_id: str) -> str:
+    """Remove a member from the Official QQ v2 group blacklist."""
+    turn = ctx.context
+    res = await turn.runtime.moderator.unban(
+        turn.gateway,
+        turn.group_id,
+        member_id,
+        operator_id=_operator_id(turn),
     )
-    if res.ok:
-        mctx.executed_actions.append("unban")
-    mctx.tool_results.append(res.summary)
-    return res.summary
+    if res.succeeded:
+        turn.executed_actions.append("unban")
+    turn.tool_outputs.append(res.message)
+    return res.message
 
 
-@function_tool(
-    name_override="group_recall_message",
-    tool_input_guardrails=[moderation_tool_guardrail],
-)
-async def tool_recall_message(
-    ctx: RunContextWrapper[ModerationContext],
+@function_tool(tool_input_guardrails=[action_guardrail])
+async def recall_message(
+    ctx: RunContextWrapper[TurnContext],
     message_id: str,
     reason: str,
 ) -> str:
-    """Recall a violating group message by message_id."""
-    mctx = ctx.context
-    res = await recall_message(
-        mctx.gateway,
-        mctx.runtime,
-        group_openid=mctx.group_openid,
-        message_id=message_id,
-        target_openid=mctx.member_openid,
+    """Recall a violating group message by its message_id."""
+    turn = ctx.context
+    res = await turn.runtime.moderator.recall(
+        turn.gateway,
+        turn.group_id,
+        message_id,
+        target_id=turn.member_id,
         reason=reason,
-        operator_openid=mctx.member_openid if mctx.mode == "admin_command" else "bot",
+        operator_id=_operator_id(turn),
     )
-    if res.ok:
-        mctx.executed_actions.append("recall")
-    mctx.tool_results.append(res.summary)
-    return res.summary
+    if res.succeeded:
+        turn.executed_actions.append("recall")
+    turn.tool_outputs.append(res.message)
+    return res.message
 
 
-MODERATION_TOOLS = [
-    tool_get_member,
-    tool_list_muted,
-    tool_warn_member,
-    tool_mute_member,
-    tool_unmute_member,
-    tool_kick_member,
-    tool_ban_member,
-    tool_unban_member,
-    tool_recall_message,
+GROUP_ADMIN_TOOLS = [
+    get_member,
+    list_muted_members,
+    warn_member,
+    mute_member,
+    unmute_member,
+    kick_member,
+    ban_member,
+    unban_member,
+    recall_message,
 ]
 
-__all__ = ["MODERATION_TOOLS"]
+__all__ = [
+    "GROUP_ADMIN_TOOLS",
+    "ban_member",
+    "get_member",
+    "kick_member",
+    "list_muted_members",
+    "mute_member",
+    "recall_message",
+    "unban_member",
+    "unmute_member",
+    "warn_member",
+]

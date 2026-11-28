@@ -1,41 +1,45 @@
-# 03. 命令参考、双 Agent 接口与外部调用
+# 03. 声明式命令、Agent 工具与编程接口
 
-## 1. `/admin` 控制台（8 个，全局管理员 / 群主可用）
+## 1. 21 个声明式群管命令（`qq_admin/commands/`）
 
-| 命令 | 说明 |
-| :--- | :--- |
-| `/admin status` | 查看当前群状态、Bot 角色、今日禁言/踢人/审批计数与配额 |
-| `/admin on` / `/admin off` | 动态开启或暂停当前群自动群管 |
-| `/admin log [n]` | 查看最近 `n` 条群管操作审计日志 |
-| `/admin perm [member_openid]` | 逐步展示目标成员的完整权限决策链 |
-| `/admin exempt <member>` / `/admin unexempt <member>` | 管理本群临时豁免名单 |
-| `/admin undo <member>` | 强制解除禁言 |
+### `/admin` 控制台（`commands/console.py`，全局管理员 / 群主）
+- `/admin status` — 查看运行状态、Bot 角色与今日配额计数
+- `/admin on` / `/admin off` — 开启或暂停本群自动群管
+- `/admin log [count]` — 查看最近 `count` 条操作审计日志
+- `/admin perm [member_openid]` — 渲染目标成员的完整权限决策链
+- `/admin exempt <member_openid>` / `/admin unexempt <member_openid>` — 管理本群豁免名单
+- `/admin undo <member_openid>` — 强制解禁并移出豁免名单
 
-## 2. 日常群管与查询命令（13 个，全局管理员 / 群主 / 群管理员可用）
+### 群管写操作（`commands/actions.py`，全局管理员 / 群主 / 群管理员）
+- `/warn <member_openid> <spam|abuse|ad> [reason]`
+- `/mute <member_openid> <10m|1h|600> [reason]`
+- `/unmute <member_openid>`
+- `/kick <member_openid> [--ban] [reason]`
+- `/ban <member_openid> [reason]`
+- `/unban <member_openid>`
+- `/recall <message_id>`
+- `/approve <member_openid> <join_request_id>`
+- `/reject <member_openid> <join_request_id> [reason]`
 
-- 管控执行：`/warn <member> <spam|abuse|ad> [reason]`、`/mute <member> <10m|1h|600> [reason]`、`/unmute <member>`、`/kick <member> [--ban] [reason]`、`/ban <member> [reason]`、`/unban <member>`、`/recall <message_id>`、`/approve <member> <req_id>`、`/reject <member> <req_id> [reason]`
-- 状态查询：`/shutlist`、`/blacklist`、`/requests`、`/member [member]`
+### 状态查询（`commands/queries.py`，全局管理员 / 群主 / 群管理员）
+- `/shutlist`、`/blacklist`、`/requests`、`/member [member_openid]`
 
-> 当 `QQ_ADMIN__LLM__ENABLED=true` 时，管控命令的执行结果、护栏拦截与权限拒绝均交由 `ReplyAgent` 结合实时状态与角色提示词自然回复；关闭 LLM 时回退到 `resources/prompts.toml` 的 `[fallback_messages]`。
+## 2. `DecisionPlanner` 工具集（`GROUP_ADMIN_TOOLS`）
 
-## 3. 外部注入官方 `AsyncTypeSafeClient` 与直接调用
+无冗余前缀，直接以领域意图命名：
+- 查询：`get_member`、`list_muted_members`
+- 执行（受 `action_guardrail` 8 步硬护栏 + Jev 动作二审保护）：`warn_member`、`mute_member`、`unmute_member`、`kick_member`、`ban_member`、`unban_member`、`recall_message`
+
+## 3. 编程调用示例
 
 ```python
-from typesafe_sdk import AsyncTypeSafeClient
 from qq import Gateway
-from qq_admin import QQAdminConfig, configure, get_runtime, mute_member
+from qq_admin import get_runtime
 
-client = AsyncTypeSafeClient(api_key="ts-your-key", model="jev-1")
-configure(QQAdminConfig(), jev_client=client)
-
-async def mute_from_hook(gateway: Gateway, group_openid: str, member_openid: str) -> None:
-    res = await mute_member(
-        gateway,
-        get_runtime(),
-        group_openid=group_openid,
-        member_openid=member_openid,
-        duration="10m",
-        reason="external risk trigger",
+async def mute_spammer(gateway: Gateway, group_id: str, member_id: str) -> None:
+    rt = get_runtime()
+    outcome = await rt.moderator.mute(
+        gateway, group_id, member_id, duration="15m", reason="external alert"
     )
-    print(res.ok, res.summary)
+    print(outcome.succeeded, outcome.message)
 ```

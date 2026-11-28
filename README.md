@@ -2,37 +2,52 @@
 
 基于 [OpsMesh](https://github.com/jhupo/OpsMesh) 与 [opsmesh-adapter-qq](https://github.com/jhupo/opsmesh-adapter-qq) 的**开箱即用 QQ 官方 Bot v2 自动群管控制插件（`type="application"`）**。
 
-插件采用 **TypeSafe AI Jev（System 1 校准检测） + 双 OpenAI Agents SDK（System 2 裁决执行 Agent + 角色化回复 Agent）** 架构，**不依赖脆弱的正则/规则快筛，绝不参与日常闲聊**：正常群聊消息经 Jev 判定安全后静默放行（`block=False`）；仅在违规处置、护栏拦截、权限拒绝或管理员指令执行时，由专职 `ReplyAgent` 结合当前真实状态与角色提示词自由组织自然、不重复的回复。
+插件按领域职责拆分为高内聚协作者组件，采用 **官方 `typesafe-sdk`（`JevEvaluator`） + 双 OpenAI Agents SDK（`DecisionPlanner` + `ReplyComposer`） + 声明式正则命令路由（`@command`）** 设计；专注群管控制，正常聊天 100% 静默放行（`block=False`）。
 
-## 模块分层
+## 工程目录结构
 
 ```text
 src/qq_admin/
-├── __init__.py               # 插件元数据、自动加载注册、底部显式重导出
-├── config.py                 # Pydantic v2 分区配置与外部 TOML 提示词加载
-├── exception.py              # 4 个语义异常类
-├── state.py                  # 内存态运行时状态（角色缓存/计数/审计日志/近期消息）与 PluginRuntime
+├── __init__.py               # PluginMetadata、configure()、get_runtime()、底部显式重导出
+├── config.py                 # 对称 *Settings 配置模型，支持 config.toml 与 QQ_ADMIN__* 环境变量
+├── exception.py              # 语义异常类（QQAdminError / BotNotAdminError / PermissionDeniedError / SafeguardBlockedError）
+├── state.py                  # GroupStateStore（角色缓存/每日配额/警告滑窗/近期上下文/审计日志）
+├── runtime.py                # AdminRuntime 组合根与外部 SDK 生命周期管理（AsyncTypeSafeClient / AsyncOpenAI）
+├── events.py                 # EventRouter（自动消息巡检、管理员 @Bot 指令、入群通知与后台任务）
 ├── resources/
+│   ├── __init__.py           # PromptCatalog 模板加载器
+│   ├── config.toml           # 完整默认 TOML 配置模板
 │   └── prompts.toml          # 全部中文提示词、Jev 评判标准、角色人设与兜底文案（.py 零中文）
-├── jev/                      # System 1：直接使用官方 typesafe-sdk AsyncTypeSafeClient
-│   ├── client.py             # create_jev_client / close_jev_client 工厂与生命周期辅助
-│   ├── evaluators.py         # evaluate_message / evaluate_join_request / check_*（直调 client.system_one）
-│   └── schemas.py            # MessageEvaluation / JoinRiskEvaluation / GuardVerdict
-├── moderation/               # 硬护栏与官方 QQ v2 直接执行层
-│   ├── guard.py              # 角色感知 8 步硬护栏、权限决策链、处罚阶梯
-│   └── actions.py            # 官方 QQ v2 唯一直接执行函数 + Jev 入群自动审批
-├── agents/                   # System 2：双 OpenAI Agents SDK 架构
-│   ├── context.py            # ModerationContext / ExecutionReport / ReplyContext
-│   ├── guardrails.py         # 三层 SDK Guardrails（均显式调用传入的 JevClient）
-│   ├── tools.py              # 9 个官方 QQ v2 原子 @function_tool
-│   ├── decision_agent.py     # Agent 1：专注裁决与调用工具，输出结构化 ExecutionReport
-│   └── reply_agent.py        # Agent 2：专注根据实时状态与角色提示词自由生成自然回复
-└── handlers/                 # OpsMesh 接入层
-    ├── events.py             # on_message / on_notice 自动事件流与后台任务
-    └── commands.py           # 21 个分级管理命令控制台
+├── jev/
+│   ├── schemas.py            # MessageAssessment / JoinRiskAssessment / SafetyVerdict
+│   └── evaluator.py          # JevEvaluator（直接持有外部注入或托管的 AsyncTypeSafeClient）
+├── moderation/
+│   ├── duration.py           # MuteDuration、parse_duration()、format_duration()
+│   ├── policy.py             # SafeguardPolicy（角色感知 8 步硬护栏、三级命令授权、权限决策链）
+│   ├── moderator.py          # GroupModerator（官方 QQ v2 唯一写操作执行器与阶梯执行）
+│   └── approver.py           # JoinApprover（入群申请审批与定时轮询）
+├── agents/
+│   ├── schemas.py            # TurnContext / ReplySpec / DecisionOutcome
+│   ├── guardrails.py         # injection_guardrail / action_guardrail / reply_guardrail
+│   ├── tools.py              # 9 个语义化 @function_tool（get_member / mute_member / kick_member 等）
+│   ├── planner.py            # DecisionPlanner（Agent 1：低温度精准调用工具并输出 DecisionOutcome）
+│   └── composer.py           # ReplyComposer（Agent 2：结合实时状态与角色人设自由组织自然回复）
+└── commands/
+    ├── registry.py           # @command 声明式正则路由（统一鉴权、参数提取、用法提示与回复合成）
+    ├── console.py            # /admin status | on | off | log | perm | exempt | unexempt | undo
+    ├── actions.py            # /warn | /mute | /unmute | /kick | /ban | /unban | /recall | /approve | /reject
+    └── queries.py            # /shutlist | /blacklist | /requests | /member
 ```
 
 ## 快速开始
+
+方式一：使用 `config.toml`（推荐，模板见 `src/qq_admin/resources/config.toml`）：
+
+```dotenv
+QQ_ADMIN_CONFIG="config.toml"
+```
+
+方式二：使用 `.env` 嵌套变量（见 [examples/admin_bot/.env.example](examples/admin_bot/.env.example)）：
 
 ```python
 import opsmesh
@@ -44,18 +59,23 @@ opsmesh.load_plugin("qq_admin")
 opsmesh.run()
 ```
 
-支持直接传入官方 `typesafe_sdk.AsyncTypeSafeClient`（例如共享宿主客户端或自定义 `httpx2` 代理）：
+支持外部直接注入 `AsyncTypeSafeClient` 与 `AsyncOpenAI`：
 
 ```python
+from openai import AsyncOpenAI
 from typesafe_sdk import AsyncTypeSafeClient
-from qq_admin import QQAdminConfig, configure
+from qq_admin import AdminConfig, configure
 
-client = AsyncTypeSafeClient(api_key="ts-your-key", model="jev-1")
-configure(QQAdminConfig(), jev_client=client)
+cfg = AdminConfig.from_toml("config.toml")
+configure(
+    cfg,
+    jev_client=AsyncTypeSafeClient(api_key="ts-xxx", model="jev-1"),
+    openai_client=AsyncOpenAI(api_key="sk-xxx"),
+)
 ```
 
 ## 文档导航
 
-- [01-architecture.md](docs/01-architecture.md) — Jev + 双 Agent 架构设计与角色护栏说明
-- [02-configuration.md](docs/02-configuration.md) — 全部分区配置项与外部 `prompts.toml` 定制
-- [03-commands-and-api.md](docs/03-commands-and-api.md) — 21 个内置命令、9 个 Agent 工具与直接调用接口
+- [01-architecture.md](docs/01-architecture.md) — 协作者组件职责、Jev + 双 Agent 流程与 8 步护栏
+- [02-configuration.md](docs/02-configuration.md) — `config.toml` 与 `.env` 全部分区配置详解
+- [03-commands-and-api.md](docs/03-commands-and-api.md) — 21 个声明式命令、9 个 Agent 工具与编程接口
