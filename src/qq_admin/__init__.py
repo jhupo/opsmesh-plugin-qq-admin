@@ -95,7 +95,6 @@ from .modules import WarningConfig as WarningConfig
 from .modules import WarningModule as WarningModule
 from .modules import format_duration as format_duration
 from .modules import parse_duration as parse_duration
-from .resources import DEFAULT_CONFIG_PATH as DEFAULT_CONFIG_PATH
-from .resources import DEFAULT_PROMPTS_PATH as DEFAULT_PROMPTS_PATH
-from .resources import PromptCatalog as PromptCatalog
+from .prompts import PROMPTS_DIR as PROMPTS_DIR
+from .prompts import PromptCatalog as PromptCatalog
 from .store import ConfigStore as ConfigStore

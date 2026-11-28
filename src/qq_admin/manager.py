@@ -16,7 +16,7 @@ from qq_admin.modules import (
     SafeguardModule,
     WarningModule,
 )
-from qq_admin.resources import PromptCatalog
+from qq_admin.prompts import PromptCatalog
 from qq_admin.store import ConfigStore
 
 

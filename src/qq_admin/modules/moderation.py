@@ -21,8 +21,15 @@ if TYPE_CHECKING:
 
 WarningCategory = Literal["spam", "abuse", "ad"]
 
-_AD_LABELS = {"commercial_ad", "qr_ad_promo", "scam_phishing", "scam_screenshot"}
-_ABUSE_LABELS = {"harassment_abuse", "flame_bait", "doxxing_privacy"}
+_AD_LABELS = {"advertising", "copyright_infringement", "non_violent_crime"}
+_ABUSE_LABELS = {
+    "violence",
+    "sexual_content",
+    "suicide_self_harm",
+    "political_sensitive",
+    "pii",
+    "unethical_behavior",
+}
 
 
 class ModerationConfig(BaseModel):
@@ -183,21 +190,21 @@ class ModerationModule:
 
         catalog = self._manager.catalog
         questions: dict[str, Noul | Choice | Score] = {
-            "injection": Noul(instructions=catalog.jev_incoming("is_prompt_injection")),
+            "injection": Noul(instructions=catalog.jev_text("is_prompt_injection")),
             "text_violation": Choice(
-                instructions=catalog.jev_incoming("text_violation_instructions"),
-                criteria=catalog.jev_incoming_criteria("text_violation_criteria"),
+                instructions=catalog.jev_text("violation_instructions"),
+                criteria=catalog.jev_text_criteria(),
             ),
-            "banter": Noul(instructions=catalog.jev_incoming("is_friendly_banter")),
+            "banter": Noul(instructions=catalog.jev_text("is_friendly_banter")),
             "severity": Score(
-                instructions=catalog.jev_incoming("violation_severity_instructions"),
-                criteria=catalog.jev_incoming_list("violation_severity_criteria"),
+                instructions=catalog.jev_text("severity_instructions"),
+                criteria=catalog.jev_severity_criteria(),
             ),
         }
         if assets:
             questions["image_violation"] = Choice(
-                instructions=catalog.jev_incoming("image_violation_instructions"),
-                criteria=catalog.jev_incoming_criteria("image_violation_criteria"),
+                instructions=catalog.jev_image("violation_instructions"),
+                criteria=catalog.jev_image_criteria(),
             )
 
         inputs = {

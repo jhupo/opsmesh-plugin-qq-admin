@@ -1,4 +1,4 @@
-"""Tests for single flat Config, ConfigStore persistence, and module configs."""
+"""Tests for Config, prompt files in prompts/, and module-owned configs."""
 
 from pathlib import Path
 
@@ -6,8 +6,7 @@ import pytest
 
 import qq_admin
 from qq_admin import (
-    DEFAULT_CONFIG_PATH,
-    DEFAULT_PROMPTS_PATH,
+    PROMPTS_DIR,
     Config,
     ConfigError,
     ConfigStore,
@@ -15,10 +14,23 @@ from qq_admin import (
     ServiceManager,
 )
 
+EXPECTED_SAFETY_CATEGORIES = {
+    "none",
+    "violence",
+    "sexual_content",
+    "suicide_self_harm",
+    "political_sensitive",
+    "jailbreak",
+    "non_violent_crime",
+    "pii",
+    "unethical_behavior",
+    "copyright_infringement",
+    "advertising",
+}
 
-def test_minimal_default_config_and_clean_exports() -> None:
-    store = ConfigStore.from_toml(DEFAULT_CONFIG_PATH)
-    cfg = Config.model_validate(store.raw_data())
+
+def test_config_defaults_and_prompts_folder() -> None:
+    cfg = Config()
     assert cfg.jev_model == "jev-1"
     assert cfg.model == "gpt-5-mini"
     assert cfg.reasoning_effort == "low"
@@ -30,9 +42,14 @@ def test_minimal_default_config_and_clean_exports() -> None:
     for tool in qq_admin.GROUP_ADMIN_TOOLS:
         assert not tool.name.startswith("tool_")
 
-    catalog = PromptCatalog.load(DEFAULT_PROMPTS_PATH)
+    assert PROMPTS_DIR.is_dir()
+    catalog = PromptCatalog.load()
+    assert set(catalog.jev_text_criteria().keys()) == EXPECTED_SAFETY_CATEGORIES
+    assert (EXPECTED_SAFETY_CATEGORIES - {"jailbreak"}).issubset(
+        set(catalog.jev_image_criteria().keys())
+    )
+    assert catalog.jev_severity_criteria()
     assert catalog.composer_persona()
-    assert catalog.jev_incoming_list("violation_severity_criteria")
 
 
 def test_module_owned_config_persistence_and_group_isolation(tmp_path: Path) -> None:

@@ -46,8 +46,8 @@ async def test_jev_execute_and_moderation_assessment() -> None:
         return_value=_mock_jev_resp(
             nouls={"injection": 0.05, "banter": 0.10},
             choices={
-                "text_violation": ("commercial_ad", 0.94),
-                "image_violation": ("qr_ad_promo", 0.91),
+                "text_violation": ("advertising", 0.94),
+                "image_violation": ("advertising", 0.91),
             },
             scores={"severity": (3.0, 0.92)},
         )
@@ -58,8 +58,8 @@ async def test_jev_execute_and_moderation_assessment() -> None:
     assessment = await manager.moderation.assess(
         "G1", "U1", "buy cheap promo", images=[b"fake-png-bytes"]
     )
-    assert assessment.violation == "commercial_ad"
-    assert assessment.image_violation == "qr_ad_promo"
+    assert assessment.violation == "advertising"
+    assert assessment.image_violation == "advertising"
     assert assessment.severity == 3
     assert assessment.requires_action(manager.moderation.config("G1"))
 

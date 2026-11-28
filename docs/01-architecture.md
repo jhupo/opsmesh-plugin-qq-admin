@@ -7,7 +7,7 @@ src/qq_admin/
 ├── __init__.py          # PluginMetadata(supported_adapters={"qq"}), configure(), auto-bind
 ├── config.py            # JevConfig, AgentConfig, ConfigStore (module-agnostic TOML store)
 ├── manager.py           # ServiceManager holding models and feature modules directly
-├── resources/           # Minimal config.toml + localized prompts.toml + PromptCatalog
+├── prompts/             # Jev text/image safety prompts, guardrails, agent prompts, notices
 ├── models/              # Jev, DecisionAgent, ReplyAgent, 9 @function_tool, 3 guardrails
 ├── modules/             # Self-contained modules (identity, safeguard, warning, escalation, audit, moderation, approval)
 ├── commands/            # Direct OpsMesh slash commands (admin, actions, queries)

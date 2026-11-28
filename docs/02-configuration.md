@@ -2,7 +2,7 @@
 
 ## Flat Base `Config`
 
-The plugin defines a single minimal `Config` ([config.py](../src/qq_admin/config.py)) and [config.toml](../src/qq_admin/resources/config.toml) for Jev and the OpenAI Responses API:
+The plugin defines a single minimal `Config` ([config.py](../src/qq_admin/config.py)) for Jev and the OpenAI Responses API:
 
 ```toml
 jev_api_key = ""

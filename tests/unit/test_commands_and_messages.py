@@ -164,9 +164,7 @@ async def test_group_message_admin_skip_and_lifecycle_events() -> None:
                 "banter": SimpleNamespace(noul=0.02),
             },
             choices={
-                "text_violation": SimpleNamespace(
-                    choice="commercial_ad", confidence=0.95
-                )
+                "text_violation": SimpleNamespace(choice="advertising", confidence=0.95)
             },
             scores={"severity": SimpleNamespace(score=2.0, confidence=0.92)},
         )
