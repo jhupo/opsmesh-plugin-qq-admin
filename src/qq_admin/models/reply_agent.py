@@ -1,14 +1,12 @@
-"""System 2 Agent 2: ReplyAgent for stateless persona-driven replies."""
+"""System 2 Agent 2: ReplyAgent using OpenAI Responses API."""
 
 from dataclasses import dataclass, field
 import json
-import os
 from typing import TYPE_CHECKING, Any
 
 from agents import (
     Agent,
     ModelSettings,
-    OpenAIChatCompletionsModel,
     OpenAIResponsesModel,
     OutputGuardrailTripwireTriggered,
     Runner,
@@ -41,7 +39,7 @@ class ReplySpec:
 
 
 class ReplyAgent:
-    """Stateless OpenAI Agents SDK reply composer with ReplyAgentConfig."""
+    """Stateless persona-driven reply composer over OpenAI Responses API."""
 
     def __init__(
         self,
@@ -51,34 +49,10 @@ class ReplyAgent:
     ) -> None:
         self.config = config
         self._client = client
-        self._owns_client = client is None
 
     @property
     def is_ready(self) -> bool:
-        if self._client is not None:
-            return True
-        return bool(self.config.secret_value or os.environ.get("OPENAI_API_KEY", ""))
-
-    def _get_client(self) -> AsyncOpenAI:
-        if self._client is None:
-            api_key = self.config.secret_value or os.environ.get("OPENAI_API_KEY", "")
-            kwargs: dict[str, Any] = {
-                "api_key": api_key,
-                "timeout": self.config.timeout_seconds,
-            }
-            if self.config.base_url:
-                kwargs["base_url"] = self.config.base_url
-            self._client = AsyncOpenAI(**kwargs)
-            self._owns_client = True
-        return self._client
-
-    def _build_model(self) -> OpenAIChatCompletionsModel | OpenAIResponsesModel:
-        client = self._get_client()
-        if self.config.use_chat_completions:
-            return OpenAIChatCompletionsModel(
-                model=self.config.model, openai_client=client
-            )
-        return OpenAIResponsesModel(model=self.config.model, openai_client=client)
+        return self._client is not None
 
     def _model_settings(self) -> ModelSettings:
         reasoning = (
@@ -89,8 +63,8 @@ class ReplyAgent:
         return ModelSettings(temperature=self.config.temperature, reasoning=reasoning)
 
     async def execute(self, spec: ReplySpec) -> str:
-        """Generate one natural, non-repetitive group admin reply."""
-        if not self.is_ready:
+        """Generate one natural group admin reply via Responses API."""
+        if self._client is None:
             return spec.fallback
 
         sg_cfg = spec.manager.safeguard.config(spec.group_id)
@@ -114,7 +88,9 @@ class ReplyAgent:
         agent = Agent[ReplySpec](
             name="QQGroupReplyAgent",
             instructions=instructions,
-            model=self._build_model(),
+            model=OpenAIResponsesModel(
+                model=self.config.model, openai_client=self._client
+            ),
             model_settings=self._model_settings(),
             output_guardrails=[reply_guardrail],
         )
@@ -137,11 +113,6 @@ class ReplyAgent:
             return spec.fallback
         except Exception:
             return spec.fallback
-
-    async def close(self) -> None:
-        if self._owns_client and self._client is not None:
-            await self._client.close()
-            self._client = None
 
 
 __all__ = ["ReplyAgent", "ReplySpec"]

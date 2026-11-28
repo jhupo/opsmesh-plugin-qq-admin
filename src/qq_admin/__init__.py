@@ -12,6 +12,7 @@ from .config import Config as _Config
 from .config import ConfigStore as _ConfigStore
 from .config import DecisionAgentConfig as _DecisionAgentConfig
 from .config import JevConfig as _JevConfig
+from .config import OpenAIConfig as _OpenAIConfig
 from .config import ReplyAgentConfig as _ReplyAgentConfig
 from .manager import ServiceManager as _ServiceManager
 from .manager import get_manager as _get_manager
@@ -47,6 +48,7 @@ def _qq_gateways() -> list[_QQGateway]:
 def configure(
     *,
     jev_config: _JevConfig | None = None,
+    openai_config: _OpenAIConfig | None = None,
     decision_config: _DecisionAgentConfig | None = None,
     reply_config: _ReplyAgentConfig | None = None,
     store: _ConfigStore | None = None,
@@ -57,16 +59,24 @@ def configure(
     """Initialize or replace the active ServiceManager with injectable SDK clients."""
     if (
         jev_config is None
+        and openai_config is None
         and decision_config is None
         and reply_config is None
         and store is None
     ):
         try:
             plugin_cfg = get_plugin_config(_Config)
-            jev_config, decision_config, reply_config, store = plugin_cfg.build_store()
+            (
+                jev_config,
+                openai_config,
+                decision_config,
+                reply_config,
+                store,
+            ) = plugin_cfg.build_store()
             prompts_path = prompts_path or plugin_cfg.qq_admin_prompts or None
         except ValueError:
             jev_config = _JevConfig()
+            openai_config = _OpenAIConfig()
             decision_config = _DecisionAgentConfig()
             reply_config = _ReplyAgentConfig()
             store = _ConfigStore()
@@ -74,6 +84,7 @@ def configure(
     return _set_manager(
         _ServiceManager(
             jev_config=jev_config,
+            openai_config=openai_config,
             decision_config=decision_config,
             reply_config=reply_config,
             store=store,
@@ -113,6 +124,7 @@ from .config import Config as Config
 from .config import ConfigStore as ConfigStore
 from .config import DecisionAgentConfig as DecisionAgentConfig
 from .config import JevConfig as JevConfig
+from .config import OpenAIConfig as OpenAIConfig
 from .config import ReasoningEffort as ReasoningEffort
 from .config import ReplyAgentConfig as ReplyAgentConfig
 from .exception import BotNotAdminError as BotNotAdminError

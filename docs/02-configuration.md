@@ -2,7 +2,7 @@
 
 ## Minimal Base `config.toml`
 
-The default [config.toml](../src/qq_admin/resources/config.toml) defines `[jev]`, `[decision_agent]`, and `[reply_agent]` (`DecisionAgentConfig` and `ReplyAgentConfig` both inherit from `BaseAgentConfig`):
+The default [config.toml](../src/qq_admin/resources/config.toml) defines one shared `[openai]` Responses API endpoint (`OpenAIConfig`) plus per-agent model configs (`DecisionAgentConfig` and `ReplyAgentConfig`, both inheriting `BaseAgentConfig`):
 
 ```toml
 [jev]
@@ -10,20 +10,23 @@ api_key = ""
 model = "jev-1"
 timeout_seconds = 10.0
 
-[decision_agent]
+[openai]
 api_key = ""
+base_url = ""
+timeout_seconds = 30.0
+
+[decision_agent]
 model = "gpt-5-mini"
 reasoning_effort = "low"
 temperature = 0.0
 max_turns = 6
 
 [reply_agent]
-api_key = ""
 model = "gpt-5-mini"
 reasoning_effort = "low"
 temperature = 0.7
-persona = ""
 max_turns = 2
+persona = ""
 ```
 
 ## Module-Owned Online Configuration

@@ -1,14 +1,12 @@
-"""System 2 Agent 1: DecisionAgent for stateless tool-calling decisions."""
+"""System 2 Agent 1: DecisionAgent using OpenAI Responses API."""
 
 from dataclasses import dataclass, field
-import os
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Literal
 
 from agents import (
     Agent,
     InputGuardrailTripwireTriggered,
     ModelSettings,
-    OpenAIChatCompletionsModel,
     OpenAIResponsesModel,
     Runner,
 )
@@ -59,7 +57,7 @@ class DecisionOutcome(BaseModel):
 
 
 class DecisionAgent:
-    """Stateless OpenAI Agents SDK decision runner with DecisionAgentConfig."""
+    """Stateless tool-calling decision runner over OpenAI Responses API."""
 
     def __init__(
         self,
@@ -69,34 +67,10 @@ class DecisionAgent:
     ) -> None:
         self.config = config
         self._client = client
-        self._owns_client = client is None
 
     @property
     def is_ready(self) -> bool:
-        if self._client is not None:
-            return True
-        return bool(self.config.secret_value or os.environ.get("OPENAI_API_KEY", ""))
-
-    def _get_client(self) -> AsyncOpenAI:
-        if self._client is None:
-            api_key = self.config.secret_value or os.environ.get("OPENAI_API_KEY", "")
-            kwargs: dict[str, Any] = {
-                "api_key": api_key,
-                "timeout": self.config.timeout_seconds,
-            }
-            if self.config.base_url:
-                kwargs["base_url"] = self.config.base_url
-            self._client = AsyncOpenAI(**kwargs)
-            self._owns_client = True
-        return self._client
-
-    def _build_model(self) -> OpenAIChatCompletionsModel | OpenAIResponsesModel:
-        client = self._get_client()
-        if self.config.use_chat_completions:
-            return OpenAIChatCompletionsModel(
-                model=self.config.model, openai_client=client
-            )
-        return OpenAIResponsesModel(model=self.config.model, openai_client=client)
+        return self._client is not None
 
     def _model_settings(self) -> ModelSettings:
         reasoning = (
@@ -107,7 +81,15 @@ class DecisionAgent:
         return ModelSettings(temperature=self.config.temperature, reasoning=reasoning)
 
     async def execute(self, prompt: str, *, context: TurnContext) -> DecisionOutcome:
-        """Execute one stateless moderation decision turn."""
+        """Execute one stateless moderation decision turn via Responses API."""
+        if self._client is None:
+            return DecisionOutcome(
+                action_taken=False,
+                should_reply=False,
+                target_member_id=context.member_id,
+                summary="OpenAI client unavailable.",
+            )
+
         catalog = context.manager.catalog
         recent_ops = context.manager.audit.count_member_actions(
             context.group_id, context.member_id, within_hours=24.0
@@ -126,7 +108,9 @@ class DecisionAgent:
         agent = Agent[TurnContext](
             name="QQGroupDecisionAgent",
             instructions=instructions,
-            model=self._build_model(),
+            model=OpenAIResponsesModel(
+                model=self.config.model, openai_client=self._client
+            ),
             model_settings=self._model_settings(),
             tools=GROUP_ADMIN_TOOLS,
             input_guardrails=[injection_guardrail],
@@ -166,11 +150,6 @@ class DecisionAgent:
         if not outcome.target_member_id:
             outcome.target_member_id = context.member_id
         return outcome
-
-    async def close(self) -> None:
-        if self._owns_client and self._client is not None:
-            await self._client.close()
-            self._client = None
 
 
 __all__ = ["DecisionAgent", "DecisionOutcome", "TurnContext"]

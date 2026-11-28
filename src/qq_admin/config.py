@@ -31,14 +31,24 @@ class JevConfig(BaseModel):
         return self.api_key.get_secret_value().strip()
 
 
-class BaseAgentConfig(BaseModel):
-    """Shared LLM connection and execution settings for OpenAI Agents."""
+class OpenAIConfig(BaseModel):
+    """Shared OpenAI Responses API endpoint credentials."""
 
     api_key: SecretStr = Field(
         default=SecretStr(""),
-        description="OpenAI or compatible endpoint API key.",
+        description="OpenAI or compatible Responses endpoint API key.",
     )
-    base_url: str = Field(default="", description="Optional custom OpenAI base URL.")
+    base_url: str = Field(default="", description="Optional custom Responses base URL.")
+    timeout_seconds: float = Field(default=30.0, gt=0)
+
+    @property
+    def secret_value(self) -> str:
+        return self.api_key.get_secret_value().strip()
+
+
+class BaseAgentConfig(BaseModel):
+    """Shared per-agent model behavior settings (Responses API)."""
+
     model: str = Field(default="gpt-5-mini", description="Target LLM model name.")
     reasoning_effort: ReasoningEffort | None = Field(
         default=None,
@@ -47,13 +57,7 @@ class BaseAgentConfig(BaseModel):
     temperature: float | None = Field(
         default=None, ge=0.0, le=2.0, description="Optional sampling temperature."
     )
-    use_chat_completions: bool = Field(default=False)
-    timeout_seconds: float = Field(default=30.0, gt=0)
     max_turns: int = Field(default=6, ge=1, le=16)
-
-    @property
-    def secret_value(self) -> str:
-        return self.api_key.get_secret_value().strip()
 
 
 class DecisionAgentConfig(BaseAgentConfig):
@@ -293,13 +297,14 @@ class ConfigStore:
 
 
 class Config(BaseModel):
-    """OpsMesh Driver config adapter for Jev, DecisionAgent, and ReplyAgent."""
+    """OpsMesh Driver config adapter for Jev, OpenAI, and both agents."""
 
     model_config = ConfigDict(extra="ignore")
 
     qq_admin_config: str = ""
     qq_admin_prompts: str = ""
     qq_admin_jev: JevConfig = Field(default_factory=JevConfig)
+    qq_admin_openai: OpenAIConfig = Field(default_factory=OpenAIConfig)
     qq_admin_decision_agent: DecisionAgentConfig = Field(
         default_factory=DecisionAgentConfig
     )
@@ -307,14 +312,18 @@ class Config(BaseModel):
 
     def build_store(
         self,
-    ) -> tuple[JevConfig, DecisionAgentConfig, ReplyAgentConfig, ConfigStore]:
+    ) -> tuple[
+        JevConfig, OpenAIConfig, DecisionAgentConfig, ReplyAgentConfig, ConfigStore
+    ]:
         if self.qq_admin_config.strip():
             store = ConfigStore.from_toml(self.qq_admin_config.strip())
             jev_raw = store.load_section("jev")
+            oa_raw = store.load_section("openai")
             dec_raw = store.load_section("decision_agent")
             rep_raw = store.load_section("reply_agent")
             return (
                 JevConfig.model_validate(jev_raw) if jev_raw else self.qq_admin_jev,
+                OpenAIConfig.model_validate(oa_raw) if oa_raw else self.qq_admin_openai,
                 DecisionAgentConfig.model_validate(dec_raw)
                 if dec_raw
                 else self.qq_admin_decision_agent,
@@ -325,6 +334,7 @@ class Config(BaseModel):
             )
         return (
             self.qq_admin_jev,
+            self.qq_admin_openai,
             self.qq_admin_decision_agent,
             self.qq_admin_reply_agent,
             ConfigStore(),
@@ -337,6 +347,7 @@ __all__ = [
     "ConfigStore",
     "DecisionAgentConfig",
     "JevConfig",
+    "OpenAIConfig",
     "ReasoningEffort",
     "ReplyAgentConfig",
     "dump_toml",

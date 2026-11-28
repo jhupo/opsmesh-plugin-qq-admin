@@ -13,6 +13,7 @@ from qq_admin import (
     ConfigStore,
     DecisionAgentConfig,
     JevConfig,
+    OpenAIConfig,
     PromptCatalog,
     ReplyAgentConfig,
     ServiceManager,
@@ -22,8 +23,9 @@ from qq_admin import (
 def test_minimal_default_config_and_clean_exports() -> None:
     store = ConfigStore.from_toml(DEFAULT_CONFIG_PATH)
     raw = store.raw_data()
-    assert set(raw.keys()) == {"jev", "decision_agent", "reply_agent"}
+    assert set(raw.keys()) == {"jev", "openai", "decision_agent", "reply_agent"}
     assert JevConfig.model_validate(raw["jev"]).model == "jev-1"
+    assert OpenAIConfig.model_validate(raw["openai"]).timeout_seconds == 30.0
 
     dec_cfg = DecisionAgentConfig.model_validate(raw["decision_agent"])
     rep_cfg = ReplyAgentConfig.model_validate(raw["reply_agent"])

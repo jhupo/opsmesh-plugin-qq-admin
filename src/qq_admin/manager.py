@@ -1,4 +1,7 @@
-"""ServiceManager: the single typed holder of models and feature modules."""
+"""ServiceManager: typed holder of shared OpenAI/Jev clients and feature modules."""
+
+import os
+from typing import Any
 
 from openai import AsyncOpenAI
 
@@ -6,6 +9,7 @@ from qq_admin.config import (
     ConfigStore,
     DecisionAgentConfig,
     JevConfig,
+    OpenAIConfig,
     ReplyAgentConfig,
 )
 from qq_admin.exception import ConfigError
@@ -23,13 +27,24 @@ from qq_admin.modules import (
 from qq_admin.resources import PromptCatalog
 
 
+def _build_openai_client(cfg: OpenAIConfig) -> AsyncOpenAI | None:
+    api_key = cfg.secret_value or os.environ.get("OPENAI_API_KEY", "").strip()
+    if not api_key:
+        return None
+    kwargs: dict[str, Any] = {"api_key": api_key, "timeout": cfg.timeout_seconds}
+    if cfg.base_url.strip():
+        kwargs["base_url"] = cfg.base_url.strip()
+    return AsyncOpenAI(**kwargs)
+
+
 class ServiceManager:
-    """Holds the Jev client, both agents, and every feature module."""
+    """Holds shared Jev/OpenAI clients, both Responses agents, and feature modules."""
 
     def __init__(
         self,
         *,
         jev_config: JevConfig | None = None,
+        openai_config: OpenAIConfig | None = None,
         decision_config: DecisionAgentConfig | None = None,
         reply_config: ReplyAgentConfig | None = None,
         store: ConfigStore | None = None,
@@ -40,12 +55,16 @@ class ServiceManager:
         self.store = store or ConfigStore()
         self.catalog = PromptCatalog.load(prompts_path)
 
+        oa_cfg = openai_config or OpenAIConfig()
+        self._owns_openai = openai_client is None
+        self._openai_client = openai_client or _build_openai_client(oa_cfg)
+
         self.jev = Jev(jev_config or JevConfig(), client=jev_client)
         self.decision_agent = DecisionAgent(
-            decision_config or DecisionAgentConfig(), client=openai_client
+            decision_config or DecisionAgentConfig(), client=self._openai_client
         )
         self.reply_agent = ReplyAgent(
-            reply_config or ReplyAgentConfig(), client=openai_client
+            reply_config or ReplyAgentConfig(), client=self._openai_client
         )
 
         self.identity = IdentityModule(self.store)
@@ -85,8 +104,9 @@ class ServiceManager:
     async def shutdown(self) -> None:
         await self.approval.stop_polling()
         await self.jev.close()
-        await self.decision_agent.close()
-        await self.reply_agent.close()
+        if self._owns_openai and self._openai_client is not None:
+            await self._openai_client.close()
+            self._openai_client = None
 
 
 _active_manager: ServiceManager | None = None
