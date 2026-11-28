@@ -4,7 +4,7 @@ from opsmesh.params import CommandArg
 from opsmesh.plugin import on_command, on_type
 from qq import Gateway, GroupJoinRequestEvent, GroupMessageEvent, Message
 
-from qq_admin.api import (
+from qq_admin.services import (
     approve_join_request,
     decline_join_request,
     get_services,

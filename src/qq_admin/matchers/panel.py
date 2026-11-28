@@ -4,8 +4,8 @@ from opsmesh.params import CommandArg
 from opsmesh.plugin import on_command
 from qq import Gateway, GroupMessageEvent, Message
 
-from qq_admin.api import get_services
 from qq_admin.exception import QQAdminError
+from qq_admin.services import get_services
 
 from . import ADMIN_PERMISSION, finish_outcome, make_command_context
 

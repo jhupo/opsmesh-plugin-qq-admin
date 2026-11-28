@@ -4,7 +4,7 @@
 
 本项目完整消费 `opsmesh-adapter-qq` 封装的**官方 v2 全量 12 项群管原子接口**与群通知事件：
 - **对群聊用户**：提供开箱即用的斜杠管理命令面板（`matchers/`）与入群申请自动审批；
-- **对上游业务 / Agent 框架**：通过 `qq_admin.api`（及顶层包 `qq_admin`）直接暴露 **18 个独立异步函数 API**（1 函数 = 1 独立文件），不内置任何第三方 Agent/Tool 包装框架，上游可按需自由封装为 OpenAI Agents SDK `@function_tool`、MCP Tool 或 HTTP 接口。
+- **对上游业务 / Agent 框架**：直接通过顶层包 `qq_admin`（采用 OpsMesh 风格的 `from ... import X as X` 显式导出）暴露 **19 个强类型异步函数 API**，零多余转发层、零第三方 Agent/Tool 框架耦合，上游可按需自由封装为 OpenAI Agents SDK `@function_tool`、MCP Tool 或 HTTP 接口。
 
 ---
 
@@ -80,15 +80,14 @@ opsmesh-plugin-qq-admin/
 │   └── 03-safeguard-and-workflows.md
 ├── examples/admin_bot/         # 集成示例工程
 ├── src/qq_admin/               # 顶层导入包 (opsmesh.load_plugin("qq_admin"))
-│   ├── __init__.py             # PluginMetadata、init_plugin 与全部 18 个函数 API 导出
+│   ├── __init__.py             # PluginMetadata、init_plugin 与全部 19 个函数 API 显式导出
 │   ├── py.typed                # PEP 561 静态类型标记
 │   ├── typing.py               # RoleTier · ViolationType · EscalationAction · AuditSource
 │   ├── exception.py            # 权限不足、配额耗尽、目标受保护等领域异常
 │   ├── config.py               # 分区强类型配置 QQAdminConfig
 │   ├── context.py              # OperatorIdentity · AdminContext · ModerationOutcome
 │   ├── store/                  # protocol.py · memory.py
-│   ├── services/               # identity · safeguard · warning · audit · moderation · auto_approve
-│   ├── api/                    # 18 个独立文件对外 async def 函数 API (零 Tool 框架抽象)
+│   ├── services/               # identity · safeguard · warning · audit · moderation (含 19 项公开异步函数) · auto_approve
 │   └── matchers/               # panel · moderation · blacklist · approval · query
 └── tests/unit/                 # 单元测试套件
 ```

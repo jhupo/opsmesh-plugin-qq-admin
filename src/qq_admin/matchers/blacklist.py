@@ -4,7 +4,7 @@ from opsmesh.params import CommandArg
 from opsmesh.plugin import on_command
 from qq import Gateway, GroupMessageEvent, Message
 
-from qq_admin.api import add_blacklist, list_blacklist, remove_blacklist
+from qq_admin.services import add_blacklist, list_blacklist, remove_blacklist
 
 from . import (
     ADMIN_PERMISSION,

@@ -8,10 +8,9 @@ from typing import Any
 from opsmesh.permission import SUPERUSER
 from qq import GROUP_ADMIN, GROUP_OWNER, Gateway, GroupMessageEvent, Message
 
-from qq_admin.api import get_services
 from qq_admin.context import AdminContext, ModerationOutcome
 from qq_admin.exception import QQAdminError
-from qq_admin.services import AdminServices
+from qq_admin.services import AdminServices, get_services
 from qq_admin.typing import AuditSource
 
 ADMIN_PERMISSION = SUPERUSER | GROUP_OWNER | GROUP_ADMIN

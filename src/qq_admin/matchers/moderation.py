@@ -4,7 +4,7 @@ from opsmesh.params import CommandArg
 from opsmesh.plugin import on_command
 from qq import Gateway, GroupMessageEvent, Message
 
-from qq_admin.api import (
+from qq_admin.services import (
     clear_warnings,
     get_mute_setting,
     kick_member,

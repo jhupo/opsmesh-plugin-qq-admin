@@ -38,6 +38,7 @@ from qq_admin import (
     mute_member,
     recall_message,
     remove_blacklist,
+    set_group_enabled,
     set_services,
     unmute_member,
     warn_member,
@@ -95,6 +96,7 @@ async def test_all_18_standalone_public_async_apis() -> None:
         ),
     )
 
+    assert (await set_group_enabled(ctx, enabled=True)).data["enabled"] is True
     assert (await get_group_info(ctx)).action == "get_group_info"
     assert (await get_bot_state(ctx)).action == "get_bot_state"
     assert (await get_member(ctx, member_openid="U1")).action == "get_member"

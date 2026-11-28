@@ -579,4 +579,256 @@ class ModerationService:
         )
 
 
-__all__ = ["ModerationService"]
+__all__ = [
+    "ModerationService",
+    "add_blacklist",
+    "approve_join_request",
+    "clear_warnings",
+    "decline_join_request",
+    "get_audit_log",
+    "get_bot_state",
+    "get_group_info",
+    "get_member",
+    "get_mute_setting",
+    "kick_member",
+    "list_blacklist",
+    "list_join_requests",
+    "list_members",
+    "mute_member",
+    "recall_message",
+    "remove_blacklist",
+    "set_group_enabled",
+    "unmute_member",
+    "warn_member",
+]
+
+
+def _resolve_moderation(services: object | None) -> ModerationService:
+    from . import get_services
+
+    svc = services if services is not None else get_services()
+    return svc.moderation  # type: ignore[attr-defined]
+
+
+async def set_group_enabled(
+    ctx: AdminContext, *, enabled: bool, services: object | None = None
+) -> ModerationOutcome:
+    """Enable or disable group administration for the target group."""
+    return await _resolve_moderation(services).set_group_enabled(ctx, enabled=enabled)
+
+
+async def get_group_info(
+    ctx: AdminContext, *, services: object | None = None
+) -> ModerationOutcome:
+    """Fetch QQ group name, member count, description, and tags."""
+    return await _resolve_moderation(services).get_group_info(ctx)
+
+
+async def get_bot_state(
+    ctx: AdminContext, *, force_refresh: bool = False, services: object | None = None
+) -> ModerationOutcome:
+    """Query bot role (owner/admin/member) and proactive message state."""
+    return await _resolve_moderation(services).get_bot_state(
+        ctx, force_refresh=force_refresh
+    )
+
+
+async def get_audit_log(
+    ctx: AdminContext,
+    *,
+    limit: int = 20,
+    source: AuditSource | None = None,
+    action: str | None = None,
+    services: object | None = None,
+) -> ModerationOutcome:
+    """Query recent structured moderation audit logs for the current group."""
+    return await _resolve_moderation(services).get_audit_log(
+        ctx, limit=limit, source=source, action=action
+    )
+
+
+async def get_member(
+    ctx: AdminContext, *, member_openid: str, services: object | None = None
+) -> ModerationOutcome:
+    """Inspect a single group member's role and join metadata."""
+    return await _resolve_moderation(services).get_member(
+        ctx, member_openid=member_openid
+    )
+
+
+async def list_members(
+    ctx: AdminContext,
+    *,
+    cursor: str | None = None,
+    limit: int | None = 50,
+    services: object | None = None,
+) -> ModerationOutcome:
+    """List group members with cursor pagination."""
+    return await _resolve_moderation(services).list_members(
+        ctx, cursor=cursor, limit=limit
+    )
+
+
+async def warn_member(
+    ctx: AdminContext,
+    *,
+    member_openid: str,
+    violation_type: ViolationType = ViolationType.OTHER,
+    reason: str = "",
+    services: object | None = None,
+) -> ModerationOutcome:
+    """Record a sliding-window violation and auto-escalate if threshold reached."""
+    return await _resolve_moderation(services).warn_member(
+        ctx,
+        member_openid=member_openid,
+        violation_type=violation_type,
+        reason=reason,
+    )
+
+
+async def clear_warnings(
+    ctx: AdminContext, *, member_openid: str, services: object | None = None
+) -> ModerationOutcome:
+    """Clear active sliding-window violation records for a group member."""
+    return await _resolve_moderation(services).clear_warnings(
+        ctx, member_openid=member_openid
+    )
+
+
+async def get_mute_setting(
+    ctx: AdminContext, *, services: object | None = None
+) -> ModerationOutcome:
+    """Inspect current group mute setting and muted member list."""
+    return await _resolve_moderation(services).get_mute_setting(ctx)
+
+
+async def mute_member(
+    ctx: AdminContext,
+    *,
+    member_openid: str,
+    duration_seconds: int = 600,
+    reason: str = "",
+    services: object | None = None,
+) -> ModerationOutcome:
+    """Apply a guarded timed mute via set_group_members_mute(op='add')."""
+    return await _resolve_moderation(services).mute_member(
+        ctx,
+        member_openid=member_openid,
+        duration_seconds=duration_seconds,
+        reason=reason,
+    )
+
+
+async def unmute_member(
+    ctx: AdminContext, *, member_openid: str, services: object | None = None
+) -> ModerationOutcome:
+    """Lift mute state for a member via set_group_members_mute(op='del')."""
+    return await _resolve_moderation(services).unmute_member(
+        ctx, member_openid=member_openid
+    )
+
+
+async def kick_member(
+    ctx: AdminContext,
+    *,
+    member_openid: str,
+    add_to_blacklist: bool = False,
+    reason: str = "",
+    services: object | None = None,
+) -> ModerationOutcome:
+    """Remove a group member via batch_remove_group_members after safeguard checks."""
+    return await _resolve_moderation(services).kick_member(
+        ctx,
+        member_openid=member_openid,
+        add_to_blacklist=add_to_blacklist,
+        reason=reason,
+    )
+
+
+async def recall_message(
+    ctx: AdminContext, *, message_id: str, services: object | None = None
+) -> ModerationOutcome:
+    """Recall a group message within Tencent's 2-minute window."""
+    return await _resolve_moderation(services).recall_message(
+        ctx, message_id=message_id
+    )
+
+
+async def list_blacklist(
+    ctx: AdminContext,
+    *,
+    cursor: str | None = None,
+    limit: int | None = 50,
+    services: object | None = None,
+) -> ModerationOutcome:
+    """Query group member blacklist via get_group_member_blacklist."""
+    return await _resolve_moderation(services).list_blacklist(
+        ctx, cursor=cursor, limit=limit
+    )
+
+
+async def add_blacklist(
+    ctx: AdminContext, *, member_openids: list[str], services: object | None = None
+) -> ModerationOutcome:
+    """Add member OpenIDs to the group blacklist."""
+    return await _resolve_moderation(services).manage_blacklist(
+        ctx, op="add", member_openids=member_openids
+    )
+
+
+async def remove_blacklist(
+    ctx: AdminContext, *, member_openids: list[str], services: object | None = None
+) -> ModerationOutcome:
+    """Remove member OpenIDs from the group blacklist."""
+    return await _resolve_moderation(services).manage_blacklist(
+        ctx, op="del", member_openids=member_openids
+    )
+
+
+async def list_join_requests(
+    ctx: AdminContext,
+    *,
+    cursor: str | None = None,
+    limit: int | None = 50,
+    services: object | None = None,
+) -> ModerationOutcome:
+    """List pending join requests via get_group_join_request_list."""
+    return await _resolve_moderation(services).list_join_requests(
+        ctx, cursor=cursor, limit=limit
+    )
+
+
+async def approve_join_request(
+    ctx: AdminContext,
+    *,
+    member_openid: str,
+    join_request_id: str | None = None,
+    services: object | None = None,
+) -> ModerationOutcome:
+    """Approve a pending group join request."""
+    return await _resolve_moderation(services).decide_join_request(
+        ctx,
+        member_openid=member_openid,
+        op="approve",
+        join_request_id=join_request_id,
+    )
+
+
+async def decline_join_request(
+    ctx: AdminContext,
+    *,
+    member_openid: str,
+    join_request_id: str | None = None,
+    reject_reason: str | None = None,
+    add_to_blacklist: bool = False,
+    services: object | None = None,
+) -> ModerationOutcome:
+    """Decline a pending group join request with optional reason and blacklist."""
+    return await _resolve_moderation(services).decide_join_request(
+        ctx,
+        member_openid=member_openid,
+        op="decline",
+        join_request_id=join_request_id,
+        reject_reason=reject_reason,
+        add_to_blacklist=add_to_blacklist,
+    )

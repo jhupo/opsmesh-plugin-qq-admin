@@ -40,10 +40,9 @@ flowchart BT
         AP["services/auto_approve.py (入群申请规则评估与定时巡检)"]
     end
 
-    subgraph L3["L3 双入口暴露层 (matchers/ & api/)"]
-        TI["api/*.py (18 个纯独立对外 async def 函数 API)"]
+    subgraph L3["L3 暴露与响应层 (matchers/ & __init__.py)"]
         MC["matchers/*.py (panel · moderation · blacklist · approval · query)"]
-        IN["__init__.py (__plugin_meta__ · init_plugin · 全量 API 导出)"]
+        IN["__init__.py (__plugin_meta__ · init_plugin · 19 项函数显式导出)"]
     end
 
     EX --> TY
@@ -65,12 +64,10 @@ flowchart BT
     MD --> AU
     MD --> CX
     AP --> MD
-    TI --> MD
-    TI --> CX
     MC --> MD
     MC --> AP
     IN --> MC
-    IN --> TI
+    IN --> MD
 ```
 
 ---
